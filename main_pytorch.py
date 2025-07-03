@@ -125,9 +125,10 @@ class BrainDigiCNN(nn.Module):
         x = x.view(x.size(0), -1)
 
         # Dense layers (exact from paper)
-        x = self.dropout1(F.relu(self.fc1(x)))
-        x = self.dropout2(F.relu(self.fc2(x)))
-        x = self.fc3(x)
+        x = self.dropout1(F.relu(self.fc1(x)))  # Dense 128 + ReLU
+        x = self.dropout2(F.relu(self.fc2(x)))  # Dense 64 + ReLU
+        x = self.fc3(x)                         # Dense 10
+        x = F.softmax(x, dim=1)                 # Softmax (as per Table 4)
 
         return x
 
@@ -160,11 +161,11 @@ def train_model(model, train_loader, val_loader, device, epochs=20, lr=0.001):
     print(f"\n🚀 Starting training on {device}")
     print(f"   Target accuracy: 98% (as reported in paper)")
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)  # Label smoothing for better generalization
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)  # AdamW with weight decay
+    criterion = nn.CrossEntropyLoss()  # Categorical Crossentropy as per Table 5
+    optimizer = optim.Adam(model.parameters(), lr=lr)  # Adam optimizer as per Table 5
 
-    # Cosine annealing scheduler for better convergence
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
+    # Simple scheduler for paper compliance
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
     
     train_losses = []
     val_losses = []
@@ -417,8 +418,8 @@ def main_pipeline_pytorch(file_path, use_checkpoint=True, clear_checkpoints=Fals
     print(f"   Validation set: {X_val.shape}")
     print(f"   Test set: {X_test.shape}")
 
-    # Create datasets and dataloaders with optimized batch size
-    batch_size = 64  # Optimal batch size based on debug results
+    # Create datasets and dataloaders with paper-compliant batch size
+    batch_size = 32  # Batch size as per Table 5
     train_dataset = EEGDataset(X_train, y_train)
     val_dataset = EEGDataset(X_val, y_val)
     test_dataset = EEGDataset(X_test, y_test)
@@ -445,8 +446,8 @@ def main_pipeline_pytorch(file_path, use_checkpoint=True, clear_checkpoints=Fals
         train_loader=train_loader,
         val_loader=val_loader,
         device=device,
-        epochs=30,  # Reduced epochs for faster iteration
-        lr=0.001    # Increased learning rate based on debug results
+        epochs=20,  # Epochs as per Table 5 (10-20 range)
+        lr=0.001    # Learning rate as per Table 5
     )
 
     # 7. Evaluate model

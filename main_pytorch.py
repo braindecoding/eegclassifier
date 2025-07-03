@@ -55,8 +55,7 @@ def setup_device():
             return device
             
         except Exception as e:
-            print(f"❌ CUDA test failed: {e}")
-            print("🔄 Falling back to CPU")
+            print(f"⚠️  CUDA test failed, using CPU: {e}")
             return torch.device('cpu')
     else:
         print("⚠️  CUDA not available, using CPU")

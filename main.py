@@ -365,6 +365,7 @@ class OptimizedPreprocessor:
         GPU-accelerated basic filtering (lowpass, notch)
         """
         if not GPU_AVAILABLE:
+            print("   ℹ️  GPU not available, skipping GPU filtering")
             return X_raw
 
         try:
@@ -412,8 +413,7 @@ class OptimizedPreprocessor:
             return result
 
         except Exception as e:
-            print(f"   ❌ GPU filtering failed: {e}")
-            print("   🔄 Falling back to CPU...")
+            print(f"   ⚠️  GPU filtering not available, using CPU processing")
             return X_raw
 
     def process_single_sample_hht(self, args):

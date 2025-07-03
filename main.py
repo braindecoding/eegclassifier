@@ -1031,6 +1031,157 @@ class EEGSignalProcessor:
         # Return extracted features
         return all_features
 
+    def plot_imf_decomposition(self, eeg_data, digit_label, channel_idx=0, save_plot=True):
+        """
+        Plot IMF decomposition untuk visualisasi
+
+        Parameters:
+        - eeg_data: Raw EEG signal
+        - digit_label: Label digit (0-9)
+        - channel_idx: Index channel yang akan diplot
+        - save_plot: Save plot ke file
+        """
+        print(f"\n📊 Plotting IMF decomposition for digit {digit_label}, channel {channel_idx}")
+
+        # Preprocessing steps
+        denoised = self.lowpass_filter(eeg_data)
+        denoised = self.notch_filter(denoised)
+
+        # EMD decomposition
+        imfs = self.empirical_mode_decomposition(denoised)
+
+        # Create comprehensive plot
+        n_imfs = len(imfs)
+        fig, axes = plt.subplots(n_imfs + 2, 1, figsize=(15, 2 * (n_imfs + 2)))
+
+        # Time axis
+        time_axis = np.arange(len(eeg_data)) / self.sampling_rate
+
+        # Plot 1: Original signal
+        axes[0].plot(time_axis, eeg_data, 'b-', linewidth=1)
+        axes[0].set_title(f'Original EEG Signal - Digit {digit_label} (Channel {channel_idx})',
+                         fontsize=12, fontweight='bold')
+        axes[0].set_ylabel('Amplitude')
+        axes[0].grid(True, alpha=0.3)
+
+        # Plot 2: Preprocessed signal
+        axes[1].plot(time_axis, denoised, 'g-', linewidth=1)
+        axes[1].set_title('Preprocessed Signal (Lowpass + Notch Filtered)',
+                         fontsize=12, fontweight='bold')
+        axes[1].set_ylabel('Amplitude')
+        axes[1].grid(True, alpha=0.3)
+
+        # Plot IMFs
+        colors = plt.cm.tab10(np.linspace(0, 1, n_imfs))
+
+        for i, imf in enumerate(imfs):
+            axes[i + 2].plot(time_axis[:len(imf)], imf, color=colors[i], linewidth=1)
+
+            # Calculate dominant frequency for each IMF
+            try:
+                # Simple frequency estimation using zero crossings
+                zero_crossings = np.where(np.diff(np.sign(imf)))[0]
+                if len(zero_crossings) > 1:
+                    avg_period = 2 * len(imf) / len(zero_crossings)  # samples per cycle
+                    dominant_freq = self.sampling_rate / avg_period
+                    freq_text = f' (~{dominant_freq:.1f} Hz)'
+                else:
+                    freq_text = ''
+            except:
+                freq_text = ''
+
+            axes[i + 2].set_title(f'IMF {i+1}{freq_text}', fontsize=10, fontweight='bold')
+            axes[i + 2].set_ylabel('Amplitude')
+            axes[i + 2].grid(True, alpha=0.3)
+
+        # Set x-label for last subplot
+        axes[-1].set_xlabel('Time (seconds)')
+
+        plt.tight_layout()
+
+        if save_plot:
+            filename = f'imf_decomposition_digit_{digit_label}_ch_{channel_idx}.png'
+            plt.savefig(filename, dpi=300, bbox_inches='tight')
+            print(f"📁 Plot saved as: {filename}")
+
+        plt.show()
+
+        # Print IMF statistics
+        print(f"\n📈 IMF Statistics for Digit {digit_label}:")
+        print(f"   Number of IMFs: {n_imfs}")
+        for i, imf in enumerate(imfs):
+            print(f"   IMF {i+1}: Length={len(imf)}, RMS={np.sqrt(np.mean(imf**2)):.4f}")
+
+        return imfs
+
+    def plot_multiple_digits_imf(self, samples_dict, max_digits=5, channel_idx=0):
+        """
+        Plot IMF decomposition untuk beberapa digit sekaligus
+
+        Parameters:
+        - samples_dict: Dictionary {digit: eeg_sample}
+        - max_digits: Maximum number of digits to plot
+        - channel_idx: Channel index to analyze
+        """
+        print(f"\n📊 Plotting IMF comparison for multiple digits (Channel {channel_idx})")
+
+        digits_to_plot = list(samples_dict.keys())[:max_digits]
+
+        for digit in digits_to_plot:
+            eeg_sample = samples_dict[digit]
+            if len(eeg_sample.shape) > 1:
+                # Multi-channel data
+                signal_data = eeg_sample[channel_idx]
+            else:
+                # Single channel data
+                signal_data = eeg_sample
+
+            print(f"\n--- Processing Digit {digit} ---")
+            imfs = self.plot_imf_decomposition(signal_data, digit, channel_idx)
+
+            # Brief pause between plots
+            time.sleep(1)
+
+    def analyze_imf_frequency_content(self, imfs, digit_label):
+        """
+        Analisis konten frekuensi dari setiap IMF
+        """
+        print(f"\n🔍 Frequency Analysis for Digit {digit_label} IMFs:")
+
+        for i, imf in enumerate(imfs):
+            if len(imf) < 10:
+                continue
+
+            # FFT analysis
+            fft_vals = np.fft.fft(imf)
+            fft_freqs = np.fft.fftfreq(len(imf), 1/self.sampling_rate)
+
+            # Find dominant frequency
+            positive_freqs = fft_freqs[:len(fft_freqs)//2]
+            positive_fft = np.abs(fft_vals[:len(fft_vals)//2])
+
+            if len(positive_fft) > 1:
+                dominant_freq_idx = np.argmax(positive_fft[1:]) + 1  # Skip DC
+                dominant_freq = positive_freqs[dominant_freq_idx]
+
+                # Classify frequency band
+                if dominant_freq <= 4:
+                    band = "Delta"
+                elif dominant_freq <= 8:
+                    band = "Theta"
+                elif dominant_freq <= 13:
+                    band = "Alpha"
+                elif dominant_freq <= 20:
+                    band = "Beta Low"
+                elif dominant_freq <= 30:
+                    band = "Beta High"
+                else:
+                    band = "Gamma"
+
+                print(f"   IMF {i+1}: Dominant freq = {dominant_freq:.2f} Hz ({band} band)")
+            else:
+                print(f"   IMF {i+1}: Unable to determine dominant frequency")
+
 class BrainDigiCNN:
     """
     Model BrainDigiCNN untuk klasifikasi digit EEG

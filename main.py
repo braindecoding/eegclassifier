@@ -100,7 +100,7 @@ class MindBigDataLoader:
         if self.data is None:
             print("Data belum dimuat!")
             return None
-        
+
         # Group by event_id
         trials = {}
         for item in self.data:
@@ -111,22 +111,38 @@ class MindBigDataLoader:
                     'channels': {}
                 }
             trials[event_id]['channels'][item['channel']] = item['signal']
-        
+
         # Convert ke format yang sesuai untuk CNN
         X = []
         y = []
-        
+
+        # Tentukan panjang minimum untuk normalisasi
+        min_length = float('inf')
+        valid_trials = []
+
+        # Cari trials yang memiliki semua channel dan tentukan panjang minimum
         for event_id, trial in trials.items():
-            # Pastikan memiliki semua channel EMOTIV EPOC
             if all(ch in trial['channels'] for ch in self.channels_emotiv_epoc):
-                # Susun data per channel
-                channels_data = []
-                for ch in self.channels_emotiv_epoc:
-                    channels_data.append(trial['channels'][ch])
-                
-                X.append(np.array(channels_data))
-                y.append(trial['code'])
-        
+                valid_trials.append((event_id, trial))
+                # Cari panjang minimum dari semua channel dalam trial ini
+                trial_min_length = min(len(trial['channels'][ch]) for ch in self.channels_emotiv_epoc)
+                min_length = min(min_length, trial_min_length)
+
+        print(f"   Found {len(valid_trials)} complete trials")
+        print(f"   Minimum signal length: {min_length}")
+
+        # Proses trials yang valid dengan panjang yang dinormalisasi
+        for event_id, trial in valid_trials:
+            # Susun data per channel dengan panjang yang sama
+            channels_data = []
+            for ch in self.channels_emotiv_epoc:
+                # Potong sinyal ke panjang minimum
+                signal = trial['channels'][ch][:min_length]
+                channels_data.append(signal)
+
+            X.append(np.array(channels_data))
+            y.append(trial['code'])
+
         return np.array(X), np.array(y)
     
     def get_data_info(self):

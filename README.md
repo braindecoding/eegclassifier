@@ -36,3 +36,11 @@ For example one line of each device could be (without the headers)
 67650	67636	EP	F7	7	260	4482.564102,4477.435897,4484.102564â€¦â€¦.
 978210	132693	MU	TP10	1	476	506,508,509,501,497,494,497,490,490,493â€¦â€¦
 1142043	173652	IN	AF3	0	256	4259.487179,4237.948717,4247.179487,4242.051282â€¦â€¦
+
+
+# Data processing
+
+1. Stratified
+2. Train test val tanpa data leakage
+3. cross vall 5 cv
+4. random seed 42

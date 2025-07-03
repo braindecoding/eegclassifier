@@ -646,29 +646,26 @@ def main_pipeline(file_path):
 
 # Contoh penggunaan
 if __name__ == "__main__":
-    # Ganti dengan path file MindBigData Anda
-    file_path = "path/to/your/mindbigdata_file.txt"
-    
-    # Contoh untuk testing dengan file dummy
-    print("=== Creating Demo Data ===")
-    print("For real usage, please provide the path to your MindBigData file.")
-    print("Example usage:")
-    print("file_path = 'path/to/your/mindbigdata_file.txt'")
-    print("model, metrics = main_pipeline(file_path)")
-    
+    # Path ke file dataset EP1.01.txt yang ada di root folder
+    file_path = "EP1.01.txt"
+
+    print("=== BrainDigiCNN: EEG Digit Classification ===")
+    print(f"Using dataset: {file_path}")
+
     # Jika file ada, jalankan pipeline
     if os.path.exists(file_path):
+        print(f"Dataset file found: {file_path}")
+        print("Starting training pipeline...")
         model, metrics = main_pipeline(file_path)
     else:
         print(f"\nFile {file_path} not found!")
-        print("Please update the file_path variable with the correct path to your MindBigData file.")
-        
+        print("Please make sure EP1.01.txt is in the same directory as this script.")
+
     print("\n=== Instructions ===")
-    print("1. Download MindBigData from the official website")
-    print("2. Extract the data file")
-    print("3. Update the file_path variable with the correct path")
-    print("4. Run the script")
-    print("5. The model will be trained and evaluated automatically")
-    
+    print("1. Make sure EP1.01.txt is in the same directory as main.py")
+    print("2. Run the script: python main.py")
+    print("3. The model will be trained and evaluated automatically")
+    print("4. Results will be displayed including accuracy, confusion matrix, and training plots")
+
     print("\n=== Expected Performance ===")
     print("Based on the paper, expected accuracy should be around 98.27% for EMOTIV EPOC+ device")

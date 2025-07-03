@@ -38,7 +38,7 @@ For example one line of each device could be (without the headers)
 1142043	173652	IN	AF3	0	256	4259.487179,4237.948717,4247.179487,4242.051282â€¦â€¦
 
 
-# Data processing
+# Balanced Dataset
 
 1. Stratified
 2. Train test val tanpa data leakage

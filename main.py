@@ -16,6 +16,46 @@ import os
 import warnings
 warnings.filterwarnings('ignore')
 
+# GPU Configuration
+def setup_gpu():
+    """
+    Setup GPU configuration for optimal performance
+    """
+    print("=== GPU Configuration ===")
+
+    # Check GPU availability
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        print(f"✅ Found {len(gpus)} GPU(s):")
+        for i, gpu in enumerate(gpus):
+            print(f"   GPU {i}: {gpu}")
+
+        try:
+            # Enable memory growth to avoid allocating all GPU memory at once
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+
+            # Set GPU as preferred device
+            tf.config.experimental.set_visible_devices(gpus[0], 'GPU')
+
+            # Enable mixed precision for better performance
+            policy = tf.keras.mixed_precision.Policy('mixed_float16')
+            tf.keras.mixed_precision.set_global_policy(policy)
+            print("✅ Mixed precision enabled (float16)")
+
+            print("✅ GPU configuration completed successfully")
+            return True
+
+        except RuntimeError as e:
+            print(f"❌ GPU configuration error: {e}")
+            return False
+    else:
+        print("⚠️  No GPU found, using CPU")
+        return False
+
+# Setup GPU at import time
+GPU_AVAILABLE = setup_gpu()
+
 class MindBigDataLoader:
     """
     Loader untuk dataset MindBigData dengan format yang disebutkan
@@ -439,37 +479,64 @@ class BrainDigiCNN:
         Compile model dengan parameter sesuai paper
         """
         optimizer = Adam(learning_rate=learning_rate)
+
+        # Use mixed precision loss scaling if GPU is available
+        if GPU_AVAILABLE:
+            loss = tf.keras.losses.CategoricalCrossentropy()
+        else:
+            loss = 'categorical_crossentropy'
+
         self.model.compile(
             optimizer=optimizer,
-            loss='categorical_crossentropy',
+            loss=loss,
             metrics=['accuracy']
         )
     
-    def train(self, X_train, y_train, X_val, y_val, epochs=20, batch_size=32):
+    def train(self, X_train, y_train, X_val, y_val, epochs=20, batch_size=None):
         """
-        Training model
+        Training model with GPU optimization
         """
+        # Auto-adjust batch size based on GPU availability
+        if batch_size is None:
+            batch_size = 128 if GPU_AVAILABLE else 32
+
+        print(f"   Using batch size: {batch_size} ({'GPU optimized' if GPU_AVAILABLE else 'CPU optimized'})")
+
         # Convert labels to categorical
         y_train_cat = to_categorical(y_train, self.num_classes)
         y_val_cat = to_categorical(y_val, self.num_classes)
-        
-        # Callback untuk early stopping
-        early_stopping = tf.keras.callbacks.EarlyStopping(
-            monitor='val_loss',
-            patience=5,
-            restore_best_weights=True
-        )
-        
-        # Training
-        self.history = self.model.fit(
-            X_train, y_train_cat,
-            validation_data=(X_val, y_val_cat),
-            epochs=epochs,
-            batch_size=batch_size,
-            callbacks=[early_stopping],
-            verbose=1
-        )
-        
+
+        # Callbacks
+        callbacks = [
+            tf.keras.callbacks.EarlyStopping(
+                monitor='val_loss',
+                patience=5,
+                restore_best_weights=True
+            )
+        ]
+
+        # Add GPU-specific callbacks
+        if GPU_AVAILABLE:
+            # Reduce learning rate on plateau
+            callbacks.append(tf.keras.callbacks.ReduceLROnPlateau(
+                monitor='val_loss',
+                factor=0.5,
+                patience=3,
+                min_lr=1e-7,
+                verbose=1
+            ))
+
+        # Training with GPU optimization
+        with tf.device('/GPU:0' if GPU_AVAILABLE else '/CPU:0'):
+            self.history = self.model.fit(
+                X_train, y_train_cat,
+                validation_data=(X_val, y_val_cat),
+                epochs=epochs,
+                batch_size=batch_size,
+                callbacks=callbacks,
+                verbose=1
+            )
+
         return self.history
     
     def evaluate(self, X_test, y_test):
@@ -542,6 +609,12 @@ def main_pipeline(file_path):
     Pipeline utama untuk training BrainDigiCNN dengan dataset MindBigData
     """
     print("=== BrainDigiCNN: EEG Digit Classification with MindBigData ===\n")
+
+    # Display GPU status
+    if GPU_AVAILABLE:
+        print("🚀 GPU acceleration enabled")
+    else:
+        print("⚠️  Running on CPU (GPU not available)")
     
     # 1. Load data
     print("1. Loading MindBigData...")

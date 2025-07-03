@@ -1,0 +1,2 @@
+# eegclassifier
+BrainDigiCNN based

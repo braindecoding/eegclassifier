@@ -1003,42 +1003,32 @@ class EEGSignalProcessor:
         # 2. Notch filter untuk power line interference
         denoised = self.notch_filter(denoised)
         
-        # 3. Frequency Band Decomposition dan Feature Extraction
-        band_features = []
+        # 3. EMD-HHT Feature Extraction (tanpa bandpass filtering)
+        print(f"      Starting EMD-HHT processing...")
 
-        for band_name, (low_freq, high_freq) in self.frequency_bands.items():
-            try:
-                print(f"      Processing {band_name} band ({low_freq}-{high_freq} Hz)...")
-
-                # Step 3a: Bandpass filter untuk isolasi frequency band
-                band_data = self.butterworth_filter(denoised, low_freq, high_freq)
-
-                # Step 3b: EMD - Dekomposisi menjadi IMFs
-                print(f"        EMD decomposition...")
-                imfs = self.empirical_mode_decomposition(band_data)
-                print(f"        Generated {len(imfs)} IMFs")
-
-                # Step 3c: HHT - Feature extraction dari IMFs
-                print(f"        HHT feature extraction...")
-                if len(imfs) > 0:
-                    hht_features = self.hilbert_huang_transform(imfs)
-                    band_features.append(hht_features.flatten())
-                    print(f"        Extracted {len(hht_features.flatten())} features")
-                else:
-                    # Fallback: gunakan band data langsung
-                    print(f"        No IMFs generated, using raw band data")
-                    band_features.append(band_data)
-            except Exception as e:
-                print(f"        Error in {band_name} band: {e}")
-                # Fallback jika ada error
-                band_features.append(denoised)
-        
-        # Gabungkan semua fitur dari semua band
         try:
-            all_features = np.concatenate(band_features)
-        except:
+            # Step 3a: EMD - Dekomposisi sinyal menjadi IMFs
+            print(f"        EMD decomposition...")
+            imfs = self.empirical_mode_decomposition(denoised)
+            print(f"        Generated {len(imfs)} IMFs")
+
+            # Step 3b: HHT - Feature extraction dari semua IMFs
+            print(f"        HHT feature extraction...")
+            if len(imfs) > 0:
+                hht_features = self.hilbert_huang_transform(imfs)
+                all_features = hht_features.flatten()
+                print(f"        Extracted {len(all_features)} features from {len(imfs)} IMFs")
+            else:
+                # Fallback: gunakan sinyal yang sudah difilter
+                print(f"        No IMFs generated, using filtered signal")
+                all_features = denoised
+
+        except Exception as e:
+            print(f"        Error in EMD-HHT processing: {e}")
+            # Fallback jika ada error
             all_features = denoised
         
+        # Return extracted features
         return all_features
 
 class BrainDigiCNN:

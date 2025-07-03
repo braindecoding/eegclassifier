@@ -39,13 +39,20 @@ def setup_gpu():
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
 
+            # Test GPU functionality with a simple operation
+            with tf.device('/GPU:0'):
+                test_tensor = tf.constant([[1.0, 2.0], [3.0, 4.0]])
+                result = tf.matmul(test_tensor, test_tensor)
+                result.numpy()  # Force execution
+
             # Set GPU as preferred device
             tf.config.experimental.set_visible_devices(gpus[0], 'GPU')
 
-            # Enable mixed precision for better performance
-            policy = tf.keras.mixed_precision.Policy('mixed_float16')
-            tf.keras.mixed_precision.set_global_policy(policy)
-            print("✅ Mixed precision enabled (float16)")
+            # Disable mixed precision for now to avoid compatibility issues
+            # Mixed precision can cause issues with some TensorFlow versions
+            # policy = tf.keras.mixed_precision.Policy('mixed_float16')
+            # tf.keras.mixed_precision.set_global_policy(policy)
+            print("✅ GPU enabled (float32 - stable mode)")
 
             print("✅ GPU configuration completed successfully")
             return True
@@ -845,15 +852,10 @@ class BrainDigiCNN:
         """
         optimizer = Adam(learning_rate=learning_rate)
 
-        # Use mixed precision loss scaling if GPU is available
-        if GPU_AVAILABLE:
-            loss = tf.keras.losses.CategoricalCrossentropy()
-        else:
-            loss = 'categorical_crossentropy'
-
+        # Use standard categorical crossentropy (stable across all TF versions)
         self.model.compile(
             optimizer=optimizer,
-            loss=loss,
+            loss='categorical_crossentropy',
             metrics=['accuracy']
         )
     
@@ -998,13 +1000,17 @@ def main_pipeline(file_path, use_checkpoint=True, clear_checkpoints=False):
     # 1. Load data
     print("1. Loading MindBigData...")
 
+    # Initialize loader
+    loader = MindBigDataLoader(file_path)
+
     # Cek apakah ada checkpoint untuk raw data
     if use_checkpoint and checkpoint_manager.checkpoint_exists('raw_data'):
         print("   📁 Loading from checkpoint...")
         data = checkpoint_manager.load_checkpoint('raw_data')
+        # Set data ke loader untuk info
+        loader.data = data
     else:
         print("   📥 Loading from file...")
-        loader = MindBigDataLoader(file_path)
 
         # Load data untuk digit 0-9 dengan device EMOTIV EPOC
         data = loader.load_data(device_filter="EP", code_filter=list(range(10)))
@@ -1016,7 +1022,7 @@ def main_pipeline(file_path, use_checkpoint=True, clear_checkpoints=False):
         # Simpan checkpoint
         if use_checkpoint:
             checkpoint_manager.save_checkpoint('raw_data', data)
-    
+
     # Get data info
     loader.get_data_info()
     
@@ -1171,8 +1177,8 @@ if __name__ == "__main__":
     print("\n=== Optimization Features ===")
     print("🚀 GPU Acceleration:")
     print("   - Automatic GPU detection and configuration")
-    print("   - Mixed precision training (float16)")
-    print("   - GPU-optimized batch processing")
+    print("   - GPU-optimized batch processing (float32 - stable mode)")
+    print("   - Memory growth enabled for efficient GPU usage")
     print("🔄 Multiprocessing:")
     print("   - CPU multiprocessing for preprocessing")
     print("   - Auto-detection of optimal process count")

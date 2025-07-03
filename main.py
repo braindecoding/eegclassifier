@@ -168,7 +168,7 @@ class OptimizedPreprocessor:
 
         start_time = time.time()
 
-        # Process dengan multiprocessing
+        # Process dengan multiprocessing menggunakan HHT
         with Pool(processes=self.n_processes) as pool:
             results = []
 
@@ -177,7 +177,7 @@ class OptimizedPreprocessor:
 
             for i in range(0, len(args_list), chunk_size):
                 chunk = args_list[i:i + chunk_size]
-                chunk_results = pool.map(process_single_sample, chunk)
+                chunk_results = pool.map(self.process_single_sample_hht, chunk)
                 results.extend(chunk_results)
 
                 progress = min(100, (i + len(chunk)) * 100 // len(args_list))
@@ -232,34 +232,39 @@ class OptimizedPreprocessor:
 
         start_time = time.time()
 
-        # Pilih strategi berdasarkan ukuran data dan hardware
-        if GPU_AVAILABLE and len(X_raw) > 5000:
-            # Untuk dataset sangat besar dengan GPU, gunakan TF Dataset
-            processed_data = self.create_tf_dataset(X_raw, batch_size=self.batch_size)
-        elif GPU_AVAILABLE and len(X_raw) > 1000:
-            # Untuk dataset besar dengan GPU
-            processed_data = self.process_gpu_batched(X_raw)
-        elif len(X_raw) > 500:
-            # Untuk dataset sedang-besar dengan CPU multiprocessing
+        # Choose optimal preprocessing strategy based on hardware and dataset size
+        print("   🚀 Choosing optimal preprocessing strategy...")
+
+        if GPU_AVAILABLE and len(X_raw) > 10000:
+            # For very large datasets: Hybrid GPU+CPU approach
+            print("   🔥 Using Hybrid GPU+CPU preprocessing for large dataset...")
+            processed_data = self.process_hybrid_gpu_cpu(X_raw)
+        elif len(X_raw) > 1000:
+            # For medium-large datasets: CPU multiprocessing with HHT
+            print("   🧠 Using CPU multiprocessing with full HHT preprocessing...")
             processed_data = self.process_parallel_cpu(X_raw)
         else:
-            # Untuk dataset kecil, gunakan sequential processing
-            print("   🔄 Using sequential processing...")
+            # For smaller datasets: Sequential HHT processing
+            print("   🔄 Using sequential HHT preprocessing...")
             processor = EEGSignalProcessor(sampling_rate=self.sampling_rate)
             processed_data = []
 
             for i, sample in enumerate(X_raw):
-                if i % 100 == 0:
-                    print(f"   Progress: {i}/{len(X_raw)}")
+                if i % 50 == 0:
+                    print(f"   Progress: {i}/{len(X_raw)} ({i/len(X_raw)*100:.1f}%)")
 
                 processed_channels = []
                 for ch in range(sample.shape[0]):
                     try:
+                        # Use proper HHT preprocessing
                         features = processor.process_eeg_signal(sample[ch])
                         processed_channels.append(features)
-                    except:
+                    except Exception as e:
+                        print(f"   Warning: Channel {ch} processing failed: {e}")
+                        # Fallback: use raw signal
                         processed_channels.append(sample[ch])
 
+                # Ensure all channels have same length
                 min_length = min(len(ch) for ch in processed_channels)
                 processed_channels = [ch[:min_length] for ch in processed_channels]
                 processed_data.append(np.concatenate(processed_channels))
@@ -312,6 +317,141 @@ class OptimizedPreprocessor:
                 print(f"   Progress: {progress}% ({i+1}/{total_batches} batches)")
 
         return np.array(processed_data)
+
+    def process_hybrid_gpu_cpu(self, X_raw):
+        """
+        Hybrid GPU+CPU preprocessing untuk dataset besar
+        GPU: Basic filtering dan normalization
+        CPU: EMD dan HHT (yang tidak bisa di-GPU)
+        """
+        print("   🔥 Hybrid GPU+CPU preprocessing...")
+
+        # Step 1: GPU-accelerated basic preprocessing
+        print("   🚀 Step 1: GPU basic filtering...")
+        X_gpu_filtered = self.gpu_basic_filtering(X_raw)
+
+        # Step 2: CPU-based HHT processing (parallelized)
+        print("   🧠 Step 2: CPU HHT processing...")
+
+        # Prepare arguments for multiprocessing
+        args_list = [(i, sample, self.sampling_rate) for i, sample in enumerate(X_gpu_filtered)]
+
+        start_time = time.time()
+
+        # Process dengan multiprocessing
+        with Pool(processes=self.n_processes) as pool:
+            results = []
+
+            # Process in chunks untuk progress tracking
+            chunk_size = max(1, len(args_list) // 20)  # 20 progress updates
+
+            for i in range(0, len(args_list), chunk_size):
+                chunk = args_list[i:i + chunk_size]
+                chunk_results = pool.map(self.process_single_sample_hht, chunk)
+                results.extend(chunk_results)
+
+                progress = min(100, (i + len(chunk)) * 100 // len(args_list))
+                elapsed = time.time() - start_time
+                print(f"   Progress: {progress}% ({i + len(chunk)}/{len(args_list)}) - {elapsed:.1f}s")
+
+        # Sort results by sample index
+        results.sort(key=lambda x: x[0])
+        processed_data = [result[1] for result in results]
+
+        return np.array(processed_data)
+
+    def gpu_basic_filtering(self, X_raw):
+        """
+        GPU-accelerated basic filtering (lowpass, notch)
+        """
+        if not GPU_AVAILABLE:
+            return X_raw
+
+        try:
+            print("   🚀 GPU filtering: Lowpass + Notch filters...")
+
+            # Convert to TensorFlow tensor
+            X_tensor = tf.constant(X_raw, dtype=tf.float32)
+
+            with tf.device('/GPU:0'):
+                # Basic filtering operations that can be done on GPU
+
+                # 1. Remove DC component (high-pass effect)
+                X_filtered = X_tensor - tf.reduce_mean(X_tensor, axis=-1, keepdims=True)
+
+                # 2. Simple lowpass filter approximation using moving average
+                # Approximate 100Hz lowpass with moving average
+                kernel_size = max(1, int(self.sampling_rate / 100))  # ~1-2 samples for 128Hz
+                kernel = tf.ones([kernel_size], dtype=tf.float32) / kernel_size
+
+                # Apply convolution for each sample and channel
+                filtered_samples = []
+                for i in range(X_filtered.shape[0]):  # For each sample
+                    sample_filtered = []
+                    for j in range(X_filtered.shape[1]):  # For each channel
+                        channel_data = X_filtered[i, j, :]
+                        # Pad and convolve
+                        padded = tf.pad(channel_data, [[kernel_size//2, kernel_size//2]], mode='REFLECT')
+                        filtered_channel = tf.nn.conv1d(
+                            tf.expand_dims(tf.expand_dims(padded, 0), 0),
+                            tf.expand_dims(tf.expand_dims(kernel, 0), -1),
+                            stride=1, padding='VALID'
+                        )
+                        sample_filtered.append(tf.squeeze(filtered_channel))
+                    filtered_samples.append(tf.stack(sample_filtered))
+
+                X_gpu_filtered = tf.stack(filtered_samples)
+
+                # 3. Normalization
+                X_normalized = tf.nn.l2_normalize(X_gpu_filtered, axis=-1)
+
+                # Convert back to numpy
+                result = X_normalized.numpy()
+
+            print(f"   ✅ GPU filtering completed: {result.shape}")
+            return result
+
+        except Exception as e:
+            print(f"   ❌ GPU filtering failed: {e}")
+            print("   🔄 Falling back to CPU...")
+            return X_raw
+
+    def process_single_sample_hht(self, args):
+        """
+        Process single sample with full HHT - untuk multiprocessing
+        """
+        sample_idx, eeg_sample, sampling_rate = args
+
+        try:
+            processor = EEGSignalProcessor(sampling_rate=sampling_rate)
+
+            # Process setiap channel dengan full HHT
+            processed_channels = []
+            for ch in range(eeg_sample.shape[0]):
+                try:
+                    # Full HHT processing (EMD + Hilbert Transform)
+                    features = processor.process_eeg_signal(eeg_sample[ch])
+                    processed_channels.append(features)
+                except Exception as e:
+                    # Fallback: basic processing
+                    channel_data = eeg_sample[ch]
+                    # Simple detrend and normalize
+                    detrended = channel_data - np.mean(channel_data)
+                    normalized = detrended / (np.std(detrended) + 1e-8)
+                    processed_channels.append(normalized)
+
+            # Ensure all channels have same length
+            min_length = min(len(ch) for ch in processed_channels)
+            processed_channels = [ch[:min_length] for ch in processed_channels]
+
+            processed_sample = np.concatenate(processed_channels)
+            return sample_idx, processed_sample
+
+        except Exception as e:
+            print(f"Error processing sample {sample_idx}: {e}")
+            # Return flattened raw data as fallback
+            flattened = eeg_sample.flatten()
+            return sample_idx, flattened
 
 class CheckpointManager:
     """
@@ -595,12 +735,12 @@ class EEGSignalProcessor:
     def __init__(self, sampling_rate=128):
         self.sampling_rate = sampling_rate
         self.frequency_bands = {
-            'delta': (0.5, 4),
-            'theta': (4, 8),
-            'alpha': (8, 12),
-            'beta_low': (12, 16),
-            'beta_high': (16, 24),
-            'gamma': (24, 40)
+            'delta': (0.5, 4),      # Delta (δ): 0.5–4 Hz
+            'theta': (4, 8),        # Theta (θ): 4–8 Hz
+            'alpha': (8, 13),       # Alpha (α): 8–13 Hz
+            'beta_low': (13, 20),   # Beta Rendah (β₁): 13–20 Hz
+            'beta_high': (20, 30),  # Beta Tinggi (β₂): 20–30 Hz
+            'gamma': (30, 100)      # Gamma (γ): 30–100 Hz
         }
     
     def butterworth_filter(self, data, low_freq, high_freq, order=5):
@@ -625,9 +765,10 @@ class EEGSignalProcessor:
         except:
             return data
     
-    def lowpass_filter(self, data, cutoff_freq=45, order=5):
+    def lowpass_filter(self, data, cutoff_freq=100, order=5):
         """
         Lowpass filter untuk noise removal
+        Updated: cutoff frequency changed from 45Hz to 100Hz
         """
         if len(data) < 10:
             return data
@@ -662,68 +803,164 @@ class EEGSignalProcessor:
     
     def empirical_mode_decomposition(self, data, max_imf=10):
         """
-        Implementasi sederhana EMD (Empirical Mode Decomposition)
+        EMD (Empirical Mode Decomposition) - Tahap 1 dari HHT
+
+        Tujuan: Memecah sinyal kompleks menjadi komponen-komponen sederhana
+        yang disebut Intrinsic Mode Functions (IMFs)
+
+        Input: Sinyal sub-band yang sudah difilter
+        Output: Set of IMFs + residue
+
+        Setiap IMF adalah komponen berosilasi yang memenuhi kriteria:
+        1. Jumlah zero crossings ≈ jumlah extrema (±1)
+        2. Mean envelope dari maxima dan minima ≈ 0
+
+        Mengikuti algoritma 7 langkah dari paper BrainDigiCNN
         """
         if len(data) < 20:
             return np.array([data])
-        
-        def get_spline_envelope(data, indices):
-            if len(indices) < 2:
-                return np.zeros_like(data)
+
+        def cubic_spline_envelope(signal_data, extrema_indices):
+            """
+            Cubic spline interpolation untuk envelope sesuai paper
+            """
+            if len(extrema_indices) < 2:
+                return np.zeros_like(signal_data)
+
             try:
-                return np.interp(range(len(data)), indices, data[indices])
+                from scipy.interpolate import CubicSpline
+                # Gunakan cubic spline interpolation
+                cs = CubicSpline(extrema_indices, signal_data[extrema_indices],
+                               bc_type='natural', extrapolate=True)
+                return cs(range(len(signal_data)))
             except:
-                return np.zeros_like(data)
-        
+                # Fallback ke linear interpolation
+                try:
+                    return np.interp(range(len(signal_data)), extrema_indices, signal_data[extrema_indices])
+                except:
+                    return np.zeros_like(signal_data)
+
+        def is_imf(h):
+            """
+            Check if signal h satisfies IMF conditions:
+            1. Number of zero crossings and extrema differ by at most 1
+            2. Mean of upper and lower envelopes is zero
+            """
+            try:
+                # Find zero crossings
+                zero_crossings = np.where(np.diff(np.sign(h)))[0]
+                num_zero_crossings = len(zero_crossings)
+
+                # Find extrema
+                maxima_idx = signal.argrelextrema(h, np.greater)[0]
+                minima_idx = signal.argrelextrema(h, np.less)[0]
+                num_extrema = len(maxima_idx) + len(minima_idx)
+
+                # Condition 1: zero crossings and extrema differ by at most 1
+                condition1 = abs(num_zero_crossings - num_extrema) <= 1
+
+                # Condition 2: mean of envelopes should be close to zero
+                if len(maxima_idx) >= 2 and len(minima_idx) >= 2:
+                    upper_env = cubic_spline_envelope(h, maxima_idx)
+                    lower_env = cubic_spline_envelope(h, minima_idx)
+                    mean_env = (upper_env + lower_env) / 2
+                    condition2 = np.abs(np.mean(mean_env)) < 0.1 * np.std(h)
+                else:
+                    condition2 = False
+
+                return condition1 and condition2
+            except:
+                return False
+
         imfs = []
-        residue = data.copy()
-        
-        for i in range(max_imf):
+        residue = data.copy().astype(float)
+
+        # EMD algorithm following paper steps
+        for imf_count in range(max_imf):
             if len(residue) < 10:
                 break
-                
+
+            # Step 1-7: Sifting process to extract IMF
             h = residue.copy()
-            
-            # Iterasi sifting
-            for j in range(20):  # maksimal 20 iterasi
+
+            # Sifting iterations
+            for sift_iter in range(50):  # Maximum sifting iterations
                 try:
-                    # Cari local maxima dan minima
+                    # Step 1: Find all successive extrema
                     maxima_idx = signal.argrelextrema(h, np.greater)[0]
                     minima_idx = signal.argrelextrema(h, np.less)[0]
-                    
+
+                    # Need at least 2 maxima and 2 minima
                     if len(maxima_idx) < 2 or len(minima_idx) < 2:
                         break
-                    
-                    # Buat envelope
-                    upper_env = get_spline_envelope(h, maxima_idx)
-                    lower_env = get_spline_envelope(h, minima_idx)
-                    
+
+                    # Step 2: Cubic spline interpolation for envelopes
+                    upper_env = cubic_spline_envelope(h, maxima_idx)  # eu(t)
+                    lower_env = cubic_spline_envelope(h, minima_idx)  # el(t)
+
+                    # Step 3: Find local mean m(t) = [eu(t) + el(t)]/2
                     mean_env = (upper_env + lower_env) / 2
+
+                    # Step 4: Find difference q(t) = p(t) - m(t)
                     h_new = h - mean_env
-                    
-                    # Cek kriteria stopping
-                    if np.sum(np.abs(h_new - h)) < 1e-6:
+
+                    # Step 5: Check if h_new is an IMF
+                    if is_imf(h_new):
+                        h = h_new
                         break
-                        
+
+                    # Continue sifting
                     h = h_new
-                except:
+
+                    # Convergence check
+                    if np.sum(np.abs(h_new - h)) < 1e-8:
+                        break
+
+                except Exception as e:
                     break
-            
-            imfs.append(h)
+
+            # Store the IMF
+            imfs.append(h.copy())
+
+            # Step 6: Find residue R1(t) = p(t) - vn(t)
             residue = residue - h
-            
-            # Cek apakah residue monotonic
+
+            # Step 7: Check if residue is monotonic (stopping criterion)
             try:
-                if len(signal.argrelextrema(residue, np.greater)[0]) < 2:
+                residue_maxima = signal.argrelextrema(residue, np.greater)[0]
+                residue_minima = signal.argrelextrema(residue, np.less)[0]
+
+                # If residue has less than 2 extrema, it's monotonic
+                if len(residue_maxima) + len(residue_minima) < 2:
                     break
             except:
                 break
-        
+
+        # Add final residue as the last component
+        if len(residue) > 0:
+            imfs.append(residue)
+
         return np.array(imfs) if imfs else np.array([data])
     
     def hilbert_huang_transform(self, imfs):
         """
-        Hilbert-Huang Transform untuk ekstraksi fitur
+        HHT (Hilbert-Huang Transform) - Tahap 2 dari HHT
+
+        Tujuan: Ekstraksi fitur dari IMFs yang dihasilkan EMD
+
+        Input: Set of IMFs dari EMD
+        Output: Feature vector [IA, IP, IF] untuk semua IMFs
+
+        Untuk setiap IMF:
+        1. Hilbert Transform → Analytic Signal
+        2. Ekstraksi Instantaneous Amplitude (IA)
+        3. Ekstraksi Instantaneous Phase (IP)
+        4. Ekstraksi Instantaneous Frequency (IF)
+
+        Features yang dihasilkan memberikan informasi:
+        - IA: Envelope/amplitudo sinyal
+        - IP: Informasi fase
+        - IF: Modulasi frekuensi
         """
         features = []
         
@@ -760,31 +997,39 @@ class EEGSignalProcessor:
         """
         Pipeline lengkap untuk preprocessing EEG
         """
-        # 1. Lowpass filter untuk noise removal
+        # 1. Lowpass filter untuk noise removal (100 Hz cutoff)
         denoised = self.lowpass_filter(eeg_data)
         
         # 2. Notch filter untuk power line interference
         denoised = self.notch_filter(denoised)
         
-        # 3. Decompose ke sub-bands
+        # 3. Frequency Band Decomposition dan Feature Extraction
         band_features = []
-        
+
         for band_name, (low_freq, high_freq) in self.frequency_bands.items():
             try:
-                # Bandpass filter
+                print(f"      Processing {band_name} band ({low_freq}-{high_freq} Hz)...")
+
+                # Step 3a: Bandpass filter untuk isolasi frequency band
                 band_data = self.butterworth_filter(denoised, low_freq, high_freq)
-                
-                # EMD
+
+                # Step 3b: EMD - Dekomposisi menjadi IMFs
+                print(f"        EMD decomposition...")
                 imfs = self.empirical_mode_decomposition(band_data)
-                
-                # HHT
+                print(f"        Generated {len(imfs)} IMFs")
+
+                # Step 3c: HHT - Feature extraction dari IMFs
+                print(f"        HHT feature extraction...")
                 if len(imfs) > 0:
                     hht_features = self.hilbert_huang_transform(imfs)
                     band_features.append(hht_features.flatten())
+                    print(f"        Extracted {len(hht_features.flatten())} features")
                 else:
-                    # Fallback
+                    # Fallback: gunakan band data langsung
+                    print(f"        No IMFs generated, using raw band data")
                     band_features.append(band_data)
-            except:
+            except Exception as e:
+                print(f"        Error in {band_name} band: {e}")
                 # Fallback jika ada error
                 band_features.append(denoised)
         

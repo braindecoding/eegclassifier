@@ -362,14 +362,16 @@ def main_pipeline_pytorch(file_path, use_checkpoint=True, clear_checkpoints=Fals
     print(f"   Labels shape: {y.shape}")
     print(f"   Unique labels: {sorted(set(y))}")
 
-    # 3. Preprocessing (reuse optimized version)
-    print("\n3. Preprocessing EEG signals...")
+    # 3. Band-wise EMD-HHT Preprocessing
+    print("\n3. Band-wise EMD-HHT Preprocessing...")
+    print("   🧠 Using Band-wise EMD with exactly 10 IMFs per frequency band")
+    print("   📊 Frequency bands: Delta, Theta, Alpha, Beta Low, Beta High, Gamma")
 
-    if use_checkpoint and checkpoint_manager.checkpoint_exists('preprocessed_data'):
-        print("   📁 Loading preprocessed data from checkpoint...")
-        X_processed = checkpoint_manager.load_checkpoint('preprocessed_data')
+    if use_checkpoint and checkpoint_manager.checkpoint_exists('preprocessed_data_bandwise'):
+        print("   📁 Loading band-wise preprocessed data from checkpoint...")
+        X_processed = checkpoint_manager.load_checkpoint('preprocessed_data_bandwise')
     else:
-        print("   🚀 Starting optimized preprocessing...")
+        print("   🚀 Starting Band-wise EMD-HHT preprocessing...")
 
         optimized_processor = OptimizedPreprocessor(
             sampling_rate=128,
@@ -380,7 +382,7 @@ def main_pipeline_pytorch(file_path, use_checkpoint=True, clear_checkpoints=Fals
         X_processed = optimized_processor.process_optimized(X_raw)
 
         if use_checkpoint:
-            checkpoint_manager.save_checkpoint('preprocessed_data', X_processed)
+            checkpoint_manager.save_checkpoint('preprocessed_data_bandwise', X_processed)
 
     print(f"   ✅ Processed data shape: {X_processed.shape}")
 

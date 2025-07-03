@@ -801,19 +801,31 @@ class EEGSignalProcessor:
         except:
             return data
     
-    def empirical_mode_decomposition(self, data, max_imf=10):
+    def empirical_mode_decomposition(self, data, num_imf=10):
         """
         EMD (Empirical Mode Decomposition) - Tahap 1 dari HHT
 
-        Tujuan: Memecah sinyal kompleks menjadi komponen-komponen sederhana
-        yang disebut Intrinsic Mode Functions (IMFs)
+        Tujuan: Memecah sinyal kompleks menjadi exactly 10 IMFs
 
-        Input: Sinyal sub-band yang sudah difilter
-        Output: Set of IMFs + residue
+        Parameters:
+        - data: Input EEG signal (preprocessed)
+        - num_imf: Fixed number of IMFs (set to exactly 10)
+
+        num_imf=10 Rationale:
+        - Consistent output size untuk semua sinyal
+        - Predictable feature vector dimensions
+        - Covers all EEG frequency ranges adequately
+        - Ensures uniform processing across all samples
+
+        Input: Sinyal yang sudah difilter (lowpass + notch)
+        Output: Exactly 10 IMFs (forced if necessary)
 
         Setiap IMF adalah komponen berosilasi yang memenuhi kriteria:
         1. Jumlah zero crossings ≈ jumlah extrema (±1)
         2. Mean envelope dari maxima dan minima ≈ 0
+
+        Jika natural EMD berhenti sebelum 10 IMFs, residue akan dibagi
+        untuk mencapai exactly 10 IMFs.
 
         Mengikuti algoritma 7 langkah dari paper BrainDigiCNN
         """
@@ -875,8 +887,11 @@ class EEGSignalProcessor:
         imfs = []
         residue = data.copy().astype(float)
 
-        # EMD algorithm following paper steps
-        for imf_count in range(max_imf):
+        # EMD algorithm to extract natural IMFs first
+        natural_imf_count = 0
+        max_natural_imfs = 15  # Allow more natural IMFs than target
+
+        for imf_count in range(max_natural_imfs):
             if len(residue) < 10:
                 break
 
@@ -921,6 +936,7 @@ class EEGSignalProcessor:
 
             # Store the IMF
             imfs.append(h.copy())
+            natural_imf_count += 1
 
             # Step 6: Find residue R1(t) = p(t) - vn(t)
             residue = residue - h
@@ -936,11 +952,56 @@ class EEGSignalProcessor:
             except:
                 break
 
-        # Add final residue as the last component
-        if len(residue) > 0:
-            imfs.append(residue)
+        # Ensure exactly num_imf IMFs
+        if len(imfs) < num_imf:
+            # If we have fewer IMFs than required, split the residue
+            remaining_imfs_needed = num_imf - len(imfs)
 
-        return np.array(imfs) if imfs else np.array([data])
+            if len(residue) > 0 and remaining_imfs_needed > 0:
+                # Split residue into remaining IMFs
+                residue_parts = np.array_split(residue, remaining_imfs_needed)
+                for part in residue_parts:
+                    if len(part) > 0:
+                        imfs.append(part)
+
+            # If still not enough, pad with zeros
+            while len(imfs) < num_imf:
+                imfs.append(np.zeros_like(data))
+
+        elif len(imfs) > num_imf:
+            # If we have more IMFs than required, keep first num_imf and merge rest into last
+            excess_imfs = imfs[num_imf:]
+            imfs = imfs[:num_imf-1]  # Keep first (num_imf-1) IMFs
+
+            # Merge excess IMFs and residue into the last IMF
+            merged_last = residue.copy()
+            for excess_imf in excess_imfs:
+                if len(excess_imf) == len(merged_last):
+                    merged_last += excess_imf
+
+            imfs.append(merged_last)
+
+        else:
+            # Exactly the right number, add residue as last IMF
+            if len(residue) > 0:
+                imfs[-1] = imfs[-1] + residue  # Add residue to last IMF
+
+        # Ensure all IMFs have the same length as input
+        final_imfs = []
+        for imf in imfs:
+            if len(imf) != len(data):
+                # Resize to match input length
+                if len(imf) > len(data):
+                    final_imfs.append(imf[:len(data)])
+                else:
+                    # Pad with zeros
+                    padded_imf = np.zeros(len(data))
+                    padded_imf[:len(imf)] = imf
+                    final_imfs.append(padded_imf)
+            else:
+                final_imfs.append(imf)
+
+        return np.array(final_imfs[:num_imf])  # Ensure exactly num_imf IMFs
     
     def hilbert_huang_transform(self, imfs):
         """
@@ -995,7 +1056,21 @@ class EEGSignalProcessor:
     
     def process_eeg_signal(self, eeg_data):
         """
-        Pipeline lengkap untuk preprocessing EEG
+        Pipeline lengkap untuk preprocessing EEG dengan Band-wise EMD-HHT
+
+        Alur processing:
+        1. Lowpass Filter (100 Hz) - Remove high frequency noise
+        2. Notch Filter (50 Hz) - Remove power line interference
+        3. Band-wise EMD-HHT:
+           - Delta (δ): 0.5–4 Hz → Bandpass → EMD → HHT
+           - Theta (θ): 4–8 Hz → Bandpass → EMD → HHT
+           - Alpha (α): 8–13 Hz → Bandpass → EMD → HHT
+           - Beta Rendah (β₁): 13–20 Hz → Bandpass → EMD → HHT
+           - Beta Tinggi (β₂): 20–30 Hz → Bandpass → EMD → HHT
+           - Gamma (γ): 30–100 Hz → Bandpass → EMD → HHT
+        4. Feature Concatenation - Gabungkan semua band features
+
+        Output: Comprehensive feature vector dari semua frequency bands
         """
         # 1. Lowpass filter untuk noise removal (100 Hz cutoff)
         denoised = self.lowpass_filter(eeg_data)
@@ -1003,29 +1078,52 @@ class EEGSignalProcessor:
         # 2. Notch filter untuk power line interference
         denoised = self.notch_filter(denoised)
         
-        # 3. EMD-HHT Feature Extraction (tanpa bandpass filtering)
-        print(f"      Starting EMD-HHT processing...")
+        # 3. Band-wise EMD-HHT Feature Extraction
+        print(f"      Starting Band-wise EMD-HHT processing...")
 
+        band_features = []
+
+        for band_name, (low_freq, high_freq) in self.frequency_bands.items():
+            try:
+                print(f"        Processing {band_name} band ({low_freq}-{high_freq} Hz)...")
+
+                # Step 3a: Bandpass filter untuk isolasi frequency band
+                band_data = self.butterworth_filter(denoised, low_freq, high_freq)
+                print(f"          Bandpass filtering completed")
+
+                # Step 3b: EMD - Dekomposisi band menjadi IMFs
+                print(f"          EMD decomposition...")
+                imfs = self.empirical_mode_decomposition(band_data)
+                print(f"          Generated {len(imfs)} IMFs for {band_name}")
+
+                # Step 3c: HHT - Feature extraction dari IMFs
+                print(f"          HHT feature extraction...")
+                if len(imfs) > 0:
+                    hht_features = self.hilbert_huang_transform(imfs)
+                    band_feature_vector = hht_features.flatten()
+                    band_features.append(band_feature_vector)
+                    print(f"          Extracted {len(band_feature_vector)} features from {band_name}")
+                else:
+                    # Fallback: gunakan band data langsung
+                    print(f"          No IMFs generated for {band_name}, using band data")
+                    band_features.append(band_data)
+
+            except Exception as e:
+                print(f"        Error in {band_name} band processing: {e}")
+                # Fallback: gunakan denoised signal
+                band_features.append(denoised[:len(denoised)//6])  # Approximate band size
+
+        # Step 4: Concatenate features dari semua frequency bands
         try:
-            # Step 3a: EMD - Dekomposisi sinyal menjadi IMFs
-            print(f"        EMD decomposition...")
-            imfs = self.empirical_mode_decomposition(denoised)
-            print(f"        Generated {len(imfs)} IMFs")
-
-            # Step 3b: HHT - Feature extraction dari semua IMFs
-            print(f"        HHT feature extraction...")
-            if len(imfs) > 0:
-                hht_features = self.hilbert_huang_transform(imfs)
-                all_features = hht_features.flatten()
-                print(f"        Extracted {len(all_features)} features from {len(imfs)} IMFs")
-            else:
-                # Fallback: gunakan sinyal yang sudah difilter
-                print(f"        No IMFs generated, using filtered signal")
-                all_features = denoised
-
+            print(f"        Concatenating features from all bands...")
+            # Ensure all band features have same length for concatenation
+            min_length = min(len(bf) for bf in band_features)
+            normalized_features = [bf[:min_length] for bf in band_features]
+            all_features = np.concatenate(normalized_features)
+            print(f"        Total features: {len(all_features)} from {len(band_features)} bands")
         except Exception as e:
-            print(f"        Error in EMD-HHT processing: {e}")
-            # Fallback jika ada error
+            print(f"        Error in feature concatenation: {e}")
+            # Fallback
             all_features = denoised
         
         # Return extracted features

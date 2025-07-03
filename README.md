@@ -1,6 +1,8 @@
 # eegclassifier
 BrainDigiCNN based
 
+BAND-Wise EMD Preprocessing
+
 ## Dataset Info
 EP1.01.txt adalah dataset dari device emotiv epoc(EP).
 

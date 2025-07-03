@@ -226,7 +226,10 @@ class OptimizedPreprocessor:
         start_time = time.time()
 
         # Pilih strategi berdasarkan ukuran data dan hardware
-        if GPU_AVAILABLE and len(X_raw) > 1000:
+        if GPU_AVAILABLE and len(X_raw) > 5000:
+            # Untuk dataset sangat besar dengan GPU, gunakan TF Dataset
+            processed_data = self.create_tf_dataset(X_raw, batch_size=self.batch_size)
+        elif GPU_AVAILABLE and len(X_raw) > 1000:
             # Untuk dataset besar dengan GPU
             processed_data = self.process_gpu_batched(X_raw)
         elif len(X_raw) > 500:
@@ -261,6 +264,47 @@ class OptimizedPreprocessor:
         print(f"   📈 Speed: {len(X_raw)/elapsed_time:.1f} samples/second")
 
         return processed_data
+
+    def create_tf_dataset(self, X_raw, batch_size=32):
+        """
+        Create optimized TensorFlow dataset untuk streaming processing
+        """
+        print("   🔄 Creating optimized TensorFlow dataset...")
+
+        def preprocess_fn(sample):
+            """TensorFlow preprocessing function"""
+            # Convert to tensor
+            sample_tensor = tf.cast(sample, tf.float32)
+
+            # Basic preprocessing dengan TF operations
+            # Remove DC component
+            sample_centered = sample_tensor - tf.reduce_mean(sample_tensor, axis=-1, keepdims=True)
+
+            # Normalize
+            sample_normalized = tf.nn.l2_normalize(sample_centered, axis=-1)
+
+            # Flatten
+            sample_flattened = tf.reshape(sample_normalized, [-1])
+
+            return sample_flattened
+
+        # Create dataset
+        dataset = tf.data.Dataset.from_tensor_slices(X_raw)
+        dataset = dataset.map(preprocess_fn, num_parallel_calls=tf.data.AUTOTUNE)
+        dataset = dataset.batch(batch_size)
+        dataset = dataset.prefetch(tf.data.AUTOTUNE)
+
+        # Process all batches
+        processed_data = []
+        total_batches = len(X_raw) // batch_size + (1 if len(X_raw) % batch_size else 0)
+
+        for i, batch in enumerate(dataset):
+            processed_data.extend(batch.numpy())
+            if i % 10 == 0:
+                progress = (i + 1) * 100 // total_batches
+                print(f"   Progress: {progress}% ({i+1}/{total_batches} batches)")
+
+        return np.array(processed_data)
 
 class CheckpointManager:
     """

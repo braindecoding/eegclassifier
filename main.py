@@ -413,6 +413,38 @@ class OptimizedPreprocessor:
         results.sort(key=lambda x: x[0])
         processed_data = [result[1] for result in results]
 
+        # Handle variable feature lengths (standardize to uniform length)
+        if len(processed_data) > 0:
+            feature_lengths = [len(features) for features in processed_data]
+            max_length = max(feature_lengths)
+            min_length = min(feature_lengths)
+
+            if max_length != min_length:
+                print(f"   📊 Standardizing feature lengths:")
+                print(f"      Min length: {min_length:,}")
+                print(f"      Max length: {max_length:,}")
+
+                # Standardize all features to max length
+                standardized_data = []
+                for i, features in enumerate(processed_data):
+                    if len(features) < max_length:
+                        # Pad with zeros
+                        padded = np.zeros(max_length)
+                        padded[:len(features)] = features
+                        standardized_data.append(padded)
+                    elif len(features) > max_length:
+                        # Truncate (shouldn't happen, but safety)
+                        standardized_data.append(features[:max_length])
+                    else:
+                        standardized_data.append(features)
+
+                    if i % 10000 == 0:
+                        print(f"      Standardizing: {i:,}/{len(processed_data):,}")
+
+                processed_data = standardized_data
+                print(f"   ✅ Feature standardization completed")
+                print(f"   📊 Uniform length: {max_length:,} features per sample")
+
         return np.array(processed_data)
 
     def gpu_basic_filtering(self, X_raw):

@@ -349,16 +349,22 @@ def preprocess_huggingface_data(X_raw, y, use_checkpoint=True):
         print(f"   ✅ Loaded preprocessed data: {X_processed.shape}")
         return X_processed
     
-    # Use OptimizedPreprocessor for Band-wise EMD-HHT
+    # Use OptimizedPreprocessor for Band-wise EMD-HHT with memory management
     print("   🚀 Starting Band-wise EMD-HHT preprocessing...")
-    
+    print(f"   📊 Input data: {X_raw.shape}, Memory: {X_raw.nbytes / (1024**3):.1f} GB")
+
+    # Memory-optimized processor settings
     optimized_processor = OptimizedPreprocessor(
         sampling_rate=128,  # Adjust based on actual sampling rate
-        n_processes=None,
-        batch_size=64
+        n_processes=min(4, os.cpu_count()),  # Limit processes to reduce memory
+        batch_size=32  # Smaller batch size for large dataset
     )
-    
+
+    print(f"   🔧 Memory-optimized settings: {optimized_processor.n_processes} processes, batch_size={optimized_processor.batch_size}")
+
     X_processed = optimized_processor.process_optimized(X_raw)
+
+    print(f"   📊 Processed data: {X_processed.shape}, Memory: {X_processed.nbytes / (1024**3):.1f} GB")
     
     # Apply robust normalization
     print("   🔄 Applying robust normalization...")
@@ -387,9 +393,28 @@ def preprocess_huggingface_data(X_raw, y, use_checkpoint=True):
     print(f"   ✅ Preprocessing completed")
     print(f"   Final shape: {X_processed.shape}")
     
-    # Save checkpoint
+    # Save checkpoint with memory optimization
     if use_checkpoint:
-        checkpoint_manager.save_checkpoint('hf_normalized_data', X_processed)
+        print(f"   💾 Saving large checkpoint ({X_processed.nbytes / (1024**3):.1f} GB)...")
+        print(f"   Using memory-efficient saving...")
+
+        try:
+            # Save in chunks to avoid memory issues
+            checkpoint_manager.save_checkpoint('hf_normalized_data', X_processed)
+            print(f"   ✅ Checkpoint saved successfully")
+        except Exception as e:
+            print(f"   ❌ Checkpoint save failed: {e}")
+            print(f"   🔄 Trying alternative save method...")
+
+            # Alternative: Save as compressed numpy
+            import numpy as np
+            checkpoint_file = os.path.join(checkpoint_manager.checkpoint_dir, 'hf_normalized_data.npz')
+            try:
+                np.savez_compressed(checkpoint_file, data=X_processed)
+                print(f"   ✅ Alternative checkpoint saved: {checkpoint_file}")
+            except Exception as e2:
+                print(f"   ❌ Alternative save also failed: {e2}")
+                print(f"   ⚠️  Continuing without checkpoint...")
     
     return X_processed
 

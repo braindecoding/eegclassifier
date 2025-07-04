@@ -388,36 +388,47 @@ def main_pipeline_pytorch(file_path, use_checkpoint=True, clear_checkpoints=Fals
 
     # 3.5. Apply memory-efficient robust normalization
     print("\n3.5. Applying memory-efficient robust normalization...")
-    print(f"   Original data stats: min={X_processed.min():.6f}, max={X_processed.max():.6f}, mean={X_processed.mean():.6f}, std={X_processed.std():.6f}")
-    print(f"   Data size: {X_processed.nbytes / (1024**3):.1f} GB")
 
-    # Memory-efficient batch processing
-    print("   Processing samples in batches to save memory...")
+    if use_checkpoint and checkpoint_manager.checkpoint_exists('normalized_data_bandwise'):
+        print("   📁 Loading normalized data from checkpoint...")
+        X_processed = checkpoint_manager.load_checkpoint('normalized_data_bandwise')
+        print(f"   ✅ Normalized data loaded from checkpoint")
+        print(f"   Normalized data stats: min={X_processed.min():.6f}, max={X_processed.max():.6f}, mean={X_processed.mean():.6f}, std={X_processed.std():.6f}")
+    else:
+        print(f"   Original data stats: min={X_processed.min():.6f}, max={X_processed.max():.6f}, mean={X_processed.mean():.6f}, std={X_processed.std():.6f}")
+        print(f"   Data size: {X_processed.nbytes / (1024**3):.1f} GB")
 
-    batch_size = 1000  # Process 1000 samples at a time
-    n_samples = X_processed.shape[0]
+        # Memory-efficient batch processing
+        print("   Processing samples in batches to save memory...")
 
-    for start_idx in range(0, n_samples, batch_size):
-        end_idx = min(start_idx + batch_size, n_samples)
+        batch_size = 1000  # Process 1000 samples at a time
+        n_samples = X_processed.shape[0]
 
-        print(f"   Progress: {end_idx}/{n_samples} ({end_idx/n_samples*100:.1f}%)")
+        for start_idx in range(0, n_samples, batch_size):
+            end_idx = min(start_idx + batch_size, n_samples)
 
-        # Process batch in-place
-        for i in range(start_idx, end_idx):
-            # Get sample reference (no copy)
-            sample = X_processed[i]
-            sample_mean = sample.mean()
-            sample_std = sample.std()
+            print(f"   Progress: {end_idx}/{n_samples} ({end_idx/n_samples*100:.1f}%)")
 
-            # In-place normalization
-            if sample_std > 1e-8:
-                sample -= sample_mean  # Subtract mean in-place
-                sample /= sample_std   # Divide by std in-place
-            else:
-                sample -= sample_mean  # Only subtract mean if std is too small
+            # Process batch in-place
+            for i in range(start_idx, end_idx):
+                # Get sample reference (no copy)
+                sample = X_processed[i]
+                sample_mean = sample.mean()
+                sample_std = sample.std()
 
-    print(f"   ✅ Normalization completed")
-    print(f"   Normalized data stats: min={X_processed.min():.6f}, max={X_processed.max():.6f}, mean={X_processed.mean():.6f}, std={X_processed.std():.6f}")
+                # In-place normalization
+                if sample_std > 1e-8:
+                    sample -= sample_mean  # Subtract mean in-place
+                    sample /= sample_std   # Divide by std in-place
+                else:
+                    sample -= sample_mean  # Only subtract mean if std is too small
+
+        print(f"   ✅ Normalization completed")
+        print(f"   Normalized data stats: min={X_processed.min():.6f}, max={X_processed.max():.6f}, mean={X_processed.mean():.6f}, std={X_processed.std():.6f}")
+
+        # Save normalized data checkpoint
+        if use_checkpoint:
+            checkpoint_manager.save_checkpoint('normalized_data_bandwise', X_processed)
 
     # 4. Prepare data for PyTorch
     print("\n4. Preparing data for PyTorch...")

@@ -155,16 +155,20 @@ class EEGDataset(Dataset):
 
 def train_model(model, train_loader, val_loader, device, epochs=20, lr=0.001):
     """
-    Train the PyTorch model with advanced techniques for 98% accuracy
+    Train the PyTorch model with memory-efficient gradient accumulation
     """
     print(f"\n🚀 Starting training on {device}")
     print(f"   Target accuracy: 98% (as reported in paper)")
+    print(f"   Using gradient accumulation to simulate batch_size=32")
 
     criterion = nn.CrossEntropyLoss()  # Categorical Crossentropy as per Table 5
     optimizer = optim.Adam(model.parameters(), lr=lr)  # Adam optimizer as per Table 5
 
     # Simple scheduler for paper compliance
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
+
+    # Gradient accumulation to simulate larger batch size
+    accumulation_steps = 8  # 4 (actual batch) × 8 (accumulation) = 32 (effective batch)
     
     train_losses = []
     val_losses = []
@@ -179,23 +183,36 @@ def train_model(model, train_loader, val_loader, device, epochs=20, lr=0.001):
         train_loss = 0.0
         train_correct = 0
         train_total = 0
-        
+
+        optimizer.zero_grad()  # Zero gradients at start of epoch
+
         for batch_idx, (data, target) in enumerate(train_loader):
             data, target = data.to(device), target.to(device)
-            
-            optimizer.zero_grad()
+
             output = model(data)
             loss = criterion(output, target)
+
+            # Scale loss by accumulation steps
+            loss = loss / accumulation_steps
             loss.backward()
-            optimizer.step()
-            
-            train_loss += loss.item()
+
+            # Accumulate gradients
+            if (batch_idx + 1) % accumulation_steps == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+
+            train_loss += loss.item() * accumulation_steps  # Unscale for logging
             _, predicted = torch.max(output.data, 1)
             train_total += target.size(0)
             train_correct += (predicted == target).sum().item()
-            
+
             if batch_idx % 10 == 0:
-                print(f'   Batch {batch_idx}/{len(train_loader)}, Loss: {loss.item():.4f}')
+                print(f'   Batch {batch_idx}/{len(train_loader)}, Loss: {loss.item() * accumulation_steps:.4f}')
+
+        # Handle remaining gradients if batch count not divisible by accumulation_steps
+        if (batch_idx + 1) % accumulation_steps != 0:
+            optimizer.step()
+            optimizer.zero_grad()
         
         # Validation phase
         model.eval()
@@ -449,8 +466,8 @@ def main_pipeline_pytorch(file_path, use_checkpoint=True, clear_checkpoints=Fals
     print(f"   Validation set: {X_val.shape}")
     print(f"   Test set: {X_test.shape}")
 
-    # Create datasets and dataloaders with paper-compliant batch size
-    batch_size = 32  # Batch size as per Table 5
+    # Create datasets and dataloaders with GPU memory-optimized batch size
+    batch_size = 4   # Reduced from 32 to fit in GPU memory (342K features per sample)
     train_dataset = EEGDataset(X_train, y_train)
     val_dataset = EEGDataset(X_val, y_val)
     test_dataset = EEGDataset(X_test, y_test)

@@ -416,42 +416,37 @@ def preprocess_huggingface_data(X_raw, y, use_checkpoint=True):
     print(f"   ✅ Preprocessing completed")
     print(f"   Final shape: {X_processed.shape}")
     
-    # Save checkpoint with chunked memory optimization
+    # Save checkpoint with ZERO-COPY memory optimization
     if use_checkpoint:
         print(f"   💾 Saving large checkpoint ({X_processed.nbytes / (1024**3):.1f} GB)...")
-        print(f"   Using chunked memory-efficient saving...")
+        print(f"   Using ZERO-COPY memory-efficient saving...")
+        print(f"   Current memory usage: ~{X_processed.nbytes / (1024**3) * 2:.1f} GB")
 
         try:
-            # Try standard checkpoint first
-            checkpoint_manager.save_checkpoint('hf_normalized_data', X_processed)
-            print(f"   ✅ Standard checkpoint saved successfully")
-        except Exception as e:
-            print(f"   ❌ Standard checkpoint save failed: {e}")
-            print(f"   🔄 Trying chunked save method...")
+            # ZERO-COPY saving (no memory spike)
+            from memory_efficient_saver import MemoryEfficientSaver
+            zero_copy_saver = MemoryEfficientSaver(checkpoint_manager.checkpoint_dir)
+            success = zero_copy_saver.save_zero_copy(X_processed, 'hf_normalized_data')
 
-            # Alternative: Chunked saving
-            try:
-                from chunked_checkpoint_saver import ChunkedCheckpointSaver
-                chunked_saver = ChunkedCheckpointSaver(checkpoint_manager.checkpoint_dir)
-                success = chunked_saver.save_chunked_data(X_processed, 'hf_normalized_data', chunk_size=5000)
+            if success:
+                print(f"   ✅ ZERO-COPY checkpoint saved successfully")
+                print(f"   💾 No memory spike during save!")
+            else:
+                print(f"   ❌ Zero-copy save failed, trying compressed chunks...")
 
-                if success:
-                    print(f"   ✅ Chunked checkpoint saved successfully")
+                # Fallback: Compressed chunks with immediate cleanup
+                success2 = zero_copy_saver.save_compressed_chunks(X_processed, 'hf_normalized_data', chunk_size=2000)
+
+                if success2:
+                    print(f"   ✅ Compressed chunks saved successfully")
                 else:
-                    print(f"   ❌ Chunked save failed")
-
-            except Exception as e2:
-                print(f"   ❌ Chunked save also failed: {e2}")
-
-                # Last resort: Compressed numpy
-                try:
-                    import numpy as np
-                    checkpoint_file = os.path.join(checkpoint_manager.checkpoint_dir, 'hf_normalized_data.npz')
-                    np.savez_compressed(checkpoint_file, data=X_processed)
-                    print(f"   ✅ Compressed numpy checkpoint saved: {checkpoint_file}")
-                except Exception as e3:
-                    print(f"   ❌ All save methods failed: {e3}")
+                    print(f"   ❌ All memory-efficient methods failed")
                     print(f"   ⚠️  Continuing without checkpoint...")
+
+        except Exception as e:
+            print(f"   ❌ Memory-efficient save failed: {e}")
+            print(f"   ⚠️  Continuing without checkpoint to avoid memory crash...")
+            print(f"   💡 Data will be processed fresh next time")
     
     return X_processed
 

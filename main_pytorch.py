@@ -243,7 +243,7 @@ def train_model(model, train_loader, val_loader, device, epochs=20, lr=0.001):
         val_accuracies.append(val_acc)
         
         # Learning rate scheduling
-        scheduler.step()
+        scheduler.step(avg_val_loss)
 
         # Save best model
         if val_acc > best_val_acc:

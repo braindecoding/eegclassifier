@@ -416,12 +416,16 @@ def main_pipeline_pytorch(file_path, use_checkpoint=True, clear_checkpoints=Fals
                 sample_mean = sample.mean()
                 sample_std = sample.std()
 
-                # In-place normalization
-                if sample_std > 1e-8:
+                # Robust in-place normalization with outlier protection
+                if sample_std > 1e-6:  # More conservative threshold
                     sample -= sample_mean  # Subtract mean in-place
                     sample /= sample_std   # Divide by std in-place
+
+                    # Clip extreme outliers to prevent artifacts
+                    np.clip(sample, -10, 10, out=sample)  # Limit to ±10 std
                 else:
-                    sample -= sample_mean  # Only subtract mean if std is too small
+                    # For very low variance samples, just center
+                    sample -= sample_mean
 
         print(f"   ✅ Normalization completed")
         print(f"   Normalized data stats: min={X_processed.min():.6f}, max={X_processed.max():.6f}, mean={X_processed.mean():.6f}, std={X_processed.std():.6f}")

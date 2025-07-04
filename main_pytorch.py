@@ -386,21 +386,38 @@ def main_pipeline_pytorch(file_path, use_checkpoint=True, clear_checkpoints=Fals
 
     print(f"   ✅ Processed data shape: {X_processed.shape}")
 
-    # 3.5. Apply robust normalization (per-sample normalization)
-    print("\n3.5. Applying robust normalization...")
+    # 3.5. Apply memory-efficient robust normalization
+    print("\n3.5. Applying memory-efficient robust normalization...")
     print(f"   Original data stats: min={X_processed.min():.6f}, max={X_processed.max():.6f}, mean={X_processed.mean():.6f}, std={X_processed.std():.6f}")
+    print(f"   Data size: {X_processed.nbytes / (1024**3):.1f} GB")
 
-    X_normalized = np.zeros_like(X_processed)
-    for i in range(X_processed.shape[0]):
-        sample = X_processed[i]
-        sample_std = sample.std()
-        if sample_std > 1e-8:
-            X_normalized[i] = (sample - sample.mean()) / sample_std
-        else:
-            X_normalized[i] = sample - sample.mean()
+    # Memory-efficient batch processing
+    print("   Processing samples in batches to save memory...")
 
-    print(f"   Normalized data stats: min={X_normalized.min():.6f}, max={X_normalized.max():.6f}, mean={X_normalized.mean():.6f}, std={X_normalized.std():.6f}")
-    X_processed = X_normalized
+    batch_size = 1000  # Process 1000 samples at a time
+    n_samples = X_processed.shape[0]
+
+    for start_idx in range(0, n_samples, batch_size):
+        end_idx = min(start_idx + batch_size, n_samples)
+
+        print(f"   Progress: {end_idx}/{n_samples} ({end_idx/n_samples*100:.1f}%)")
+
+        # Process batch in-place
+        for i in range(start_idx, end_idx):
+            # Get sample reference (no copy)
+            sample = X_processed[i]
+            sample_mean = sample.mean()
+            sample_std = sample.std()
+
+            # In-place normalization
+            if sample_std > 1e-8:
+                sample -= sample_mean  # Subtract mean in-place
+                sample /= sample_std   # Divide by std in-place
+            else:
+                sample -= sample_mean  # Only subtract mean if std is too small
+
+    print(f"   ✅ Normalization completed")
+    print(f"   Normalized data stats: min={X_processed.min():.6f}, max={X_processed.max():.6f}, mean={X_processed.mean():.6f}, std={X_processed.std():.6f}")
 
     # 4. Prepare data for PyTorch
     print("\n4. Preparing data for PyTorch...")

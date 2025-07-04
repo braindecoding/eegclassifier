@@ -464,7 +464,7 @@ class CheckpointManager:
 
     def save_checkpoint(self, stage, data, filename=None):
         """
-        Simpan checkpoint untuk stage tertentu
+        Simpan checkpoint dengan atomic operation (aman dari corruption)
 
         Args:
             stage: nama stage (e.g., 'raw_data', 'organized_data', 'preprocessed_data')
@@ -475,14 +475,66 @@ class CheckpointManager:
             filename = f"{stage}.pkl"
 
         filepath = os.path.join(self.checkpoint_dir, filename)
+        temp_filepath = filepath + '.tmp'
 
         try:
-            with open(filepath, 'wb') as f:
+            print(f"💾 Saving checkpoint: {stage}...")
+
+            # Step 1: Save to temporary file first (atomic operation)
+            with open(temp_filepath, 'wb') as f:
                 pickle.dump(data, f)
-            print(f"✅ Checkpoint saved: {filepath}")
+                f.flush()  # Ensure data is written to disk
+                os.fsync(f.fileno())  # Force OS to write to disk
+
+            # Step 2: Verify temporary file integrity
+            temp_size = os.path.getsize(temp_filepath)
+            if temp_size == 0:
+                raise Exception("Temporary file is empty - save failed")
+
+            # Step 3: Create backup of existing file (if exists)
+            backup_filepath = filepath + '.backup'
+            if os.path.exists(filepath):
+                os.rename(filepath, backup_filepath)
+
+            # Step 4: Atomic rename (this is atomic on most filesystems)
+            os.rename(temp_filepath, filepath)
+
+            # Step 5: Verify final file integrity
+            final_size = os.path.getsize(filepath)
+            if final_size == 0:
+                raise Exception("Final file is empty - corruption detected")
+
+            print(f"✅ Checkpoint saved safely: {filepath}")
+            print(f"   File size: {final_size / (1024**2):.1f} MB")
+
+            # Step 6: Clean up backup if save was successful
+            if os.path.exists(backup_filepath):
+                os.remove(backup_filepath)
+
             return True
+
         except Exception as e:
             print(f"❌ Failed to save checkpoint: {e}")
+
+            # Cleanup: Remove temporary file
+            if os.path.exists(temp_filepath):
+                try:
+                    os.remove(temp_filepath)
+                    print(f"🗑️  Cleaned up temporary file")
+                except:
+                    pass
+
+            # Recovery: Restore from backup if available
+            backup_filepath = filepath + '.backup'
+            if os.path.exists(backup_filepath):
+                try:
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                    os.rename(backup_filepath, filepath)
+                    print(f"🔄 Restored from backup")
+                except:
+                    print(f"❌ Failed to restore from backup")
+
             return False
 
     def load_checkpoint(self, stage, filename=None):

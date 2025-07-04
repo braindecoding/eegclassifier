@@ -160,14 +160,32 @@ def main_resume_from_checkpoint():
     print(f"   Min label: {y.min()}")
     print(f"   Max label: {y.max()}")
     print(f"   Unique labels: {np.unique(y)}")
-    print(f"   Label counts: {np.bincount(y)}")
 
-    # Fix label range if needed
-    if y.min() < 0 or y.max() >= 10:
-        print(f"⚠️  Labels outside [0,9] range, fixing...")
-        # Clip labels to valid range
-        y = np.clip(y, 0, 9)
-        print(f"   Fixed labels - Min: {y.min()}, Max: {y.max()}")
+    # Filter out rest samples (label = -1)
+    if y.min() < 0:
+        print(f"⚠️  Found rest samples (label = -1), filtering them out...")
+
+        # Find valid samples (labels 0-9)
+        valid_mask = y >= 0
+        valid_indices = np.where(valid_mask)[0]
+
+        print(f"   Total samples: {len(y):,}")
+        print(f"   Rest samples (label=-1): {np.sum(y == -1):,}")
+        print(f"   Valid samples (labels 0-9): {len(valid_indices):,}")
+
+        # Filter data and labels
+        X_processed = X_processed[valid_indices]
+        y = y[valid_indices]
+
+        print(f"   ✅ Filtered data shape: {X_processed.shape}")
+        print(f"   ✅ Filtered labels shape: {y.shape}")
+
+    # Show final label distribution
+    print(f"🔍 Final label distribution:")
+    print(f"   Min label: {y.min()}")
+    print(f"   Max label: {y.max()}")
+    print(f"   Unique labels: {np.unique(y)}")
+    print(f"   Label counts: {np.bincount(y)}")
 
     # 3. Create memory-efficient splits
     print("\n📊 Creating memory-efficient train/val/test splits...")

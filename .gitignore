@@ -6,6 +6,8 @@ __pycache__/
 *.pth
 # C extensions
 *.so
+*.npy
+*.json
 *.txt
 # Distribution / packaging
 .Python

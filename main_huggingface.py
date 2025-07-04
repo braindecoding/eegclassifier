@@ -199,7 +199,16 @@ def extract_split_data(split_data):
 
     for start_idx in range(0, total_samples, batch_size):
         end_idx = min(start_idx + batch_size, total_samples)
-        batch_samples = split_data[start_idx:end_idx]
+
+        # Correct way to access Hugging Face dataset samples
+        batch_samples = []
+        for i in range(start_idx, end_idx):
+            try:
+                sample = split_data[i]  # Access individual sample by index
+                batch_samples.append(sample)
+            except Exception as e:
+                print(f"   ❌ Error accessing sample {i}: {e}")
+                continue
 
         # Progress update
         progress = (end_idx / total_samples) * 100
@@ -209,25 +218,94 @@ def extract_split_data(split_data):
         batch_features = []
         batch_labels = []
 
+        # Debug: Check sample type and try different access methods
+        if len(batch_samples) > 0:
+            first_sample = batch_samples[0]
+            print(f"   🔍 Debug - Sample type: {type(first_sample)}")
+
+            if isinstance(first_sample, str):
+                print(f"   🔍 Debug - Sample is string (first 200 chars): {first_sample[:200]}")
+                print(f"   🔧 Trying alternative access methods...")
+
+                # Try accessing as pandas-like
+                try:
+                    # Maybe it's a datasets.Dataset that needs different access
+                    alt_sample = dict(split_data[start_idx])
+                    print(f"   ✅ Alternative access successful: {type(alt_sample)}")
+                    if isinstance(alt_sample, dict):
+                        print(f"   🔍 Alt sample keys: {list(alt_sample.keys())[:10]}...")
+                        batch_samples = [dict(split_data[i]) for i in range(start_idx, end_idx)]
+                        print(f"   🔄 Updated batch_samples with dict conversion")
+                except Exception as e:
+                    print(f"   ❌ Alternative access failed: {e}")
+
+            elif isinstance(first_sample, dict):
+                print(f"   🔍 Debug - Sample keys: {list(first_sample.keys())[:10]}...")
+                print(f"   ✅ Sample is dictionary - should work correctly")
+            else:
+                print(f"   🔍 Debug - Unexpected type, content: {first_sample}")
+
+                # Try converting to dict
+                try:
+                    dict_sample = dict(first_sample)
+                    print(f"   ✅ Conversion to dict successful: {list(dict_sample.keys())[:10]}...")
+                    batch_samples = [dict(sample) for sample in batch_samples]
+                    print(f"   🔄 Updated batch_samples with dict conversion")
+                except Exception as e:
+                    print(f"   ❌ Dict conversion failed: {e}")
+
         for sample in batch_samples:
-            # Extract EEG data (optimized key detection)
-            eeg_data = None
-
-            # Try common EEG data keys in order of likelihood
-            for key in ['eeg', 'signal', 'data', 'features', 'x', 'input']:
-                if key in sample:
-                    eeg_data = np.array(sample[key], dtype=np.float32)  # Use float32 for GPU
-                    break
-
-            if eeg_data is None:
-                # Fallback: find first non-label key
-                data_keys = [k for k in sample.keys() if k not in ['label', 'digit', 'target', 'y', 'class']]
-                if data_keys:
-                    eeg_data = np.array(sample[data_keys[0]], dtype=np.float32)
-                else:
+            try:
+                # Handle different sample types
+                if isinstance(sample, str):
+                    print(f"   ❌ Sample is string, not dictionary. Need different parsing approach.")
+                    print(f"   Sample content: {sample[:100]}...")
+                    continue
+                elif not isinstance(sample, dict):
+                    print(f"   ❌ Unexpected sample type: {type(sample)}")
                     continue
 
-            # Extract label (optimized key detection)
+                # Extract EEG data from flattened time-series format
+                # Format: 'CHANNEL-TIMEPOINT' (e.g., 'AF3-0', 'AF3-1', ..., 'AF4-255')
+
+                # Get all EEG channel keys (exclude label)
+                eeg_keys = [k for k in sample.keys() if k not in ['label', 'digit', 'target', 'y', 'class']]
+            except Exception as e:
+                print(f"   ❌ Error processing sample: {e}")
+                continue
+
+            if not eeg_keys:
+                continue
+
+            # Group by channel and reconstruct time series
+            channels_data = {}
+
+            for key in eeg_keys:
+                if '-' in key:  # Format: 'CHANNEL-TIMEPOINT'
+                    channel, timepoint = key.rsplit('-', 1)
+                    try:
+                        timepoint_idx = int(timepoint)
+                        if channel not in channels_data:
+                            channels_data[channel] = {}
+                        channels_data[channel][timepoint_idx] = float(sample[key])
+                    except ValueError:
+                        continue
+
+            # Convert to numpy arrays per channel
+            channel_arrays = []
+            for channel in sorted(channels_data.keys()):
+                # Sort by timepoint index and extract values
+                timepoints = sorted(channels_data[channel].keys())
+                channel_signal = [channels_data[channel][tp] for tp in timepoints]
+                channel_arrays.append(channel_signal)
+
+            if not channel_arrays:
+                continue
+
+            # Stack channels: shape (n_channels, n_timepoints)
+            eeg_data = np.array(channel_arrays, dtype=np.float32)
+
+            # Extract label
             label = None
             for key in ['label', 'digit', 'target', 'y', 'class']:
                 if key in sample:

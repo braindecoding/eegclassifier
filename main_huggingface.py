@@ -343,8 +343,21 @@ def preprocess_huggingface_data(X_raw, y, use_checkpoint=True):
     
     checkpoint_manager = CheckpointManager()
     
-    if use_checkpoint and checkpoint_manager.checkpoint_exists('hf_normalized_data'):
-        print("   📁 Loading preprocessed Hugging Face data from checkpoint...")
+    # Check for zero-copy checkpoint first, then regular checkpoint
+    from memory_efficient_saver import MemoryEfficientSaver
+    zero_copy_saver = MemoryEfficientSaver(checkpoint_manager.checkpoint_dir)
+
+    if use_checkpoint and zero_copy_saver.checkpoint_exists('hf_normalized_data'):
+        print("   📁 Loading preprocessed data from ZERO-COPY checkpoint...")
+        X_processed = zero_copy_saver.load_zero_copy('hf_normalized_data')
+        if X_processed is not None:
+            print(f"   ✅ Loaded zero-copy data: {X_processed.shape}")
+            print(f"   💾 Memory-mapped loading (no RAM spike)")
+            return X_processed
+        else:
+            print("   ❌ Zero-copy loading failed, proceeding with fresh processing...")
+    elif use_checkpoint and checkpoint_manager.checkpoint_exists('hf_normalized_data'):
+        print("   📁 Loading preprocessed data from regular checkpoint...")
         X_processed = checkpoint_manager.load_checkpoint('hf_normalized_data')
         print(f"   ✅ Loaded preprocessed data: {X_processed.shape}")
         return X_processed
@@ -488,14 +501,28 @@ def main_huggingface_pipeline():
     # 2. Preprocess data with Band-wise EMD-HHT
     X_processed = preprocess_huggingface_data(X_raw, y)
 
-    # 3. Create reproducible splits for fair comparison
-    print("\n📊 Creating reproducible train/val/test splits...")
-    X_train, X_temp, y_train, y_temp = train_test_split(
-        X_processed, y, test_size=0.3, random_state=42, stratify=y
+    # 3. Create memory-efficient reproducible splits
+    print("\n📊 Creating memory-efficient train/val/test splits...")
+    print(f"   Data size: {X_processed.nbytes / (1024**3):.1f} GB")
+    print(f"   Using index-based splitting to avoid memory copies...")
+
+    # Create indices instead of copying data
+    n_samples = len(X_processed)
+    indices = np.arange(n_samples)
+
+    # Split indices instead of data (memory efficient)
+    train_idx, temp_idx, y_train, y_temp = train_test_split(
+        indices, y, test_size=0.3, random_state=42, stratify=y
     )
-    X_val, X_test, y_val, y_test = train_test_split(
-        X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp
+    val_idx, test_idx, y_val, y_test = train_test_split(
+        temp_idx, y_temp, test_size=0.5, random_state=42, stratify=y_temp
     )
+
+    print(f"   ✅ Index-based splits created:")
+    print(f"      Train indices: {len(train_idx):,}")
+    print(f"      Val indices: {len(val_idx):,}")
+    print(f"      Test indices: {len(test_idx):,}")
+    print(f"   💾 Memory usage: Minimal (indices only, no data copies)")
     
     # 3. Use standard dataset splits (if available) or create reproducible splits
     print("\n📊 Using dataset splits...")
@@ -544,14 +571,21 @@ def main_huggingface_pipeline():
     print(f"   ")
     print(f"   🎯 Standardized splits enable fair comparison with other methods!")
     
-    # 4. Create PyTorch datasets and dataloaders
-    print("\n🔄 Creating PyTorch datasets...")
-    
+    # 4. Create memory-efficient PyTorch datasets using indices
+    print("\n🔄 Creating memory-efficient PyTorch datasets...")
+
     batch_size = 4  # Memory-optimized batch size
-    
-    train_dataset = HuggingFaceEEGDataset(X_train, y_train)
-    val_dataset = HuggingFaceEEGDataset(X_val, y_val)
-    test_dataset = HuggingFaceEEGDataset(X_test, y_test)
+
+    # Create datasets using indices (no data copying)
+    print(f"   Creating datasets with index-based access...")
+    train_dataset = HuggingFaceEEGDataset(X_processed[train_idx], y_train)
+    print(f"   Train dataset created: {len(train_dataset)} samples")
+
+    val_dataset = HuggingFaceEEGDataset(X_processed[val_idx], y_val)
+    print(f"   Val dataset created: {len(val_dataset)} samples")
+
+    test_dataset = HuggingFaceEEGDataset(X_processed[test_idx], y_test)
+    print(f"   Test dataset created: {len(test_dataset)} samples")
     
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)

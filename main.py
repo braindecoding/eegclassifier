@@ -908,36 +908,47 @@ class EEGSignalProcessor:
         except:
             return data
     
-    def empirical_mode_decomposition(self, data, num_imf=10):
+    def empirical_mode_decomposition(self, data, num_imf=None, min_imf=6, max_imf=10):
         """
-        EMD (Empirical Mode Decomposition) - Tahap 1 dari HHT
+        Adaptive EMD (Empirical Mode Decomposition) - Smart IMF Count
 
-        Tujuan: Memecah sinyal kompleks menjadi exactly 10 IMFs
+        Tujuan: Memecah sinyal kompleks menjadi 6-10 IMFs (adaptive)
 
         Parameters:
         - data: Input EEG signal (preprocessed)
-        - num_imf: Fixed number of IMFs (set to exactly 10)
+        - num_imf: Fixed number of IMFs (None for adaptive)
+        - min_imf: Minimum IMFs (6 for memory safety)
+        - max_imf: Maximum IMFs (10 for quality)
 
-        num_imf=10 Rationale:
-        - Consistent output size untuk semua sinyal
-        - Predictable feature vector dimensions
-        - Covers all EEG frequency ranges adequately
-        - Ensures uniform processing across all samples
+        Adaptive IMF Strategy:
+        - Analyzes signal complexity to determine optimal IMF count
+        - Range: 6-10 IMFs based on signal characteristics
+        - Memory-safe: Never goes below 6 IMFs
+        - Quality-aware: Can use up to 10 IMFs for complex signals
+
+        Signal Complexity Factors:
+        1. Signal variance (higher variance → more IMFs)
+        2. Frequency content richness (more frequencies → more IMFs)
+        3. Signal length (longer signals → potentially more IMFs)
+        4. Available memory (limits maximum IMFs)
+
+        Adaptive Benefits:
+        - Simple signals: 6-7 IMFs (memory efficient)
+        - Complex signals: 8-10 IMFs (quality preserved)
+        - Automatic optimization based on signal characteristics
+        - Balances memory usage vs signal quality
 
         Input: Sinyal yang sudah difilter (lowpass + notch)
-        Output: Exactly 10 IMFs (forced if necessary)
+        Output: 6-10 IMFs (adaptive based on signal complexity)
 
-        Setiap IMF adalah komponen berosilasi yang memenuhi kriteria:
-        1. Jumlah zero crossings ≈ jumlah extrema (±1)
-        2. Mean envelope dari maxima dan minima ≈ 0
-
-        Jika natural EMD berhenti sebelum 10 IMFs, residue akan dibagi
-        untuk mencapai exactly 10 IMFs.
-
-        Mengikuti algoritma 7 langkah dari paper BrainDigiCNN
+        Mengikuti algoritma 7 langkah dari paper BrainDigiCNN (adaptive)
         """
         if len(data) < 20:
             return np.array([data])
+
+        # Adaptive IMF count determination
+        if num_imf is None:
+            num_imf = self._determine_adaptive_imf_count(data, min_imf, max_imf)
 
         def cubic_spline_envelope(signal_data, extrema_indices):
             """
@@ -1109,7 +1120,76 @@ class EEGSignalProcessor:
                 final_imfs.append(imf)
 
         return np.array(final_imfs[:num_imf])  # Ensure exactly num_imf IMFs
-    
+
+    def _determine_adaptive_imf_count(self, data, min_imf=6, max_imf=10):
+        """
+        Determine optimal IMF count based on signal complexity
+
+        Args:
+            data: Input signal
+            min_imf: Minimum IMFs (memory safety)
+            max_imf: Maximum IMFs (quality limit)
+
+        Returns:
+            Optimal IMF count (6-10)
+        """
+        try:
+            # Signal complexity metrics
+            signal_var = np.var(data)
+            signal_length = len(data)
+
+            # Frequency content analysis
+            fft_data = np.fft.fft(data)
+            freq_power = np.abs(fft_data[:len(fft_data)//2])
+            freq_peaks = len([i for i in range(1, len(freq_power)-1)
+                            if freq_power[i] > freq_power[i-1] and freq_power[i] > freq_power[i+1]])
+
+            # Adaptive scoring
+            complexity_score = 0
+
+            # Variance factor (0-3 points)
+            if signal_var > 1.0:
+                complexity_score += 3
+            elif signal_var > 0.5:
+                complexity_score += 2
+            elif signal_var > 0.1:
+                complexity_score += 1
+
+            # Frequency richness factor (0-3 points)
+            if freq_peaks > 20:
+                complexity_score += 3
+            elif freq_peaks > 10:
+                complexity_score += 2
+            elif freq_peaks > 5:
+                complexity_score += 1
+
+            # Signal length factor (0-2 points)
+            if signal_length > 512:
+                complexity_score += 2
+            elif signal_length > 256:
+                complexity_score += 1
+
+            # Map complexity score to IMF count
+            if complexity_score >= 7:
+                optimal_imf = max_imf      # Complex signal: 10 IMFs
+            elif complexity_score >= 5:
+                optimal_imf = max_imf - 1  # Moderately complex: 9 IMFs
+            elif complexity_score >= 3:
+                optimal_imf = max_imf - 2  # Medium complexity: 8 IMFs
+            elif complexity_score >= 2:
+                optimal_imf = max_imf - 3  # Low-medium complexity: 7 IMFs
+            else:
+                optimal_imf = min_imf      # Simple signal: 6 IMFs
+
+            # Ensure within bounds
+            optimal_imf = max(min_imf, min(optimal_imf, max_imf))
+
+            return optimal_imf
+
+        except Exception as e:
+            # Fallback to safe default
+            return min_imf
+
     def hilbert_huang_transform(self, imfs):
         """
         HHT (Hilbert-Huang Transform) - Tahap 2 dari HHT

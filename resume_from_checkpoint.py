@@ -117,9 +117,13 @@ def load_labels_from_dataset():
 
 def main_resume_from_checkpoint():
     """Resume training directly from checkpoint"""
-    
+
+    # Enable CUDA debugging
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
     print("🚀 Resume EEG Training from Zero-Copy Checkpoint")
     print("=" * 60)
+    print("🔧 CUDA debugging enabled")
     
     # 1. Load preprocessed data from zero-copy checkpoint
     print("📁 Loading preprocessed data from zero-copy checkpoint...")
@@ -150,7 +154,21 @@ def main_resume_from_checkpoint():
         return
     
     print(f"✅ Labels loaded: {y.shape}")
-    
+
+    # Debug label range
+    print(f"🔍 Label analysis:")
+    print(f"   Min label: {y.min()}")
+    print(f"   Max label: {y.max()}")
+    print(f"   Unique labels: {np.unique(y)}")
+    print(f"   Label counts: {np.bincount(y)}")
+
+    # Fix label range if needed
+    if y.min() < 0 or y.max() >= 10:
+        print(f"⚠️  Labels outside [0,9] range, fixing...")
+        # Clip labels to valid range
+        y = np.clip(y, 0, 9)
+        print(f"   Fixed labels - Min: {y.min()}, Max: {y.max()}")
+
     # 3. Create memory-efficient splits
     print("\n📊 Creating memory-efficient train/val/test splits...")
     

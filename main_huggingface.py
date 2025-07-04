@@ -184,6 +184,44 @@ def load_huggingface_data():
         print(f"   Falling back to original text file method...")
         return None, None
 
+def extract_split_data(split_data):
+    """
+    Extract features and labels from a dataset split
+    """
+    features = []
+    labels = []
+
+    for sample in split_data:
+        # Extract EEG data (adjust key names based on actual dataset structure)
+        if 'eeg' in sample:
+            eeg_data = np.array(sample['eeg'])
+        elif 'signal' in sample:
+            eeg_data = np.array(sample['signal'])
+        elif 'data' in sample:
+            eeg_data = np.array(sample['data'])
+        else:
+            # Try to find the main data field
+            data_keys = [k for k in sample.keys() if k not in ['label', 'digit', 'target']]
+            if data_keys:
+                eeg_data = np.array(sample[data_keys[0]])
+            else:
+                continue
+
+        # Extract label
+        if 'label' in sample:
+            label = sample['label']
+        elif 'digit' in sample:
+            label = sample['digit']
+        elif 'target' in sample:
+            label = sample['target']
+        else:
+            continue
+
+        features.append(eeg_data)
+        labels.append(label)
+
+    return np.array(features), np.array(labels)
+
 def preprocess_huggingface_data(X_raw, y, use_checkpoint=True):
     """
     Apply Band-wise EMD-HHT preprocessing to Hugging Face data
@@ -244,23 +282,42 @@ def preprocess_huggingface_data(X_raw, y, use_checkpoint=True):
 
 def main_huggingface_pipeline():
     """
-    Main pipeline for Hugging Face dataset
+    Main pipeline for Hugging Face dataset with standardized benchmarking
     """
     print("🚀 EEG Digit Classification - Hugging Face Dataset")
     print("=" * 60)
-    
+    print("🎯 Using standardized dataset for apple-to-apple comparison!")
+
     # 1. Load Hugging Face dataset
-    X_raw, y = load_huggingface_data()
-    
-    if X_raw is None:
-        print("❌ Failed to load Hugging Face dataset")
+    print("📥 Loading MindBigData2022_MNIST_EP from Hugging Face...")
+
+    try:
+        ds = load_dataset("DavidVivancos/MindBigData2022_MNIST_EP")
+        print(f"   ✅ Dataset loaded successfully")
+        print(f"   Available splits: {list(ds.keys())}")
+
+        # Use first available split for now (can be improved later)
+        split_name = list(ds.keys())[0]
+        data_split = ds[split_name]
+        print(f"   Using split: {split_name} ({len(data_split)} samples)")
+
+        # Extract data from the split
+        print("   🔄 Extracting features and labels...")
+        X_raw, y = extract_split_data(data_split)
+
+        print(f"   ✅ Data extracted: {X_raw.shape}, labels: {y.shape}")
+        print(f"   Unique labels: {np.unique(y)}")
+
+    except Exception as e:
+        print(f"   ❌ Failed to load Hugging Face dataset: {e}")
+        print("   💡 Make sure to install: pip install datasets")
         return
-    
-    # 2. Preprocess data
+
+    # 2. Preprocess data with Band-wise EMD-HHT
     X_processed = preprocess_huggingface_data(X_raw, y)
-    
-    # 3. Split data
-    print("\n📊 Splitting data...")
+
+    # 3. Create reproducible splits for fair comparison
+    print("\n📊 Creating reproducible train/val/test splits...")
     X_train, X_temp, y_train, y_temp = train_test_split(
         X_processed, y, test_size=0.3, random_state=42, stratify=y
     )
@@ -268,9 +325,52 @@ def main_huggingface_pipeline():
         X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp
     )
     
-    print(f"   Train: {X_train.shape[0]} samples")
-    print(f"   Validation: {X_val.shape[0]} samples") 
-    print(f"   Test: {X_test.shape[0]} samples")
+    # 3. Use standard dataset splits (if available) or create reproducible splits
+    print("\n📊 Using dataset splits...")
+
+    # Check if dataset has predefined splits
+    if hasattr(ds, 'keys') and len(ds.keys()) > 1:
+        print("   ✅ Using predefined dataset splits for standardized benchmarking")
+        # Use predefined splits for fair comparison with other methods
+        # This ensures apple-to-apple comparison with other research
+
+        # Extract each split separately
+        splits = list(ds.keys())
+        print(f"   Available splits: {splits}")
+
+        # Process each split
+        if 'train' in splits:
+            X_train, y_train = extract_split_data(ds['train'])
+        if 'validation' in splits or 'val' in splits:
+            val_key = 'validation' if 'validation' in splits else 'val'
+            X_val, y_val = extract_split_data(ds[val_key])
+        if 'test' in splits:
+            X_test, y_test = extract_split_data(ds['test'])
+
+        # If missing validation set, create from train
+        if 'validation' not in splits and 'val' not in splits:
+            print("   Creating validation set from training data...")
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_train, y_train, test_size=0.15, random_state=42, stratify=y_train
+            )
+    else:
+        print("   ⚠️  No predefined splits found, creating reproducible splits...")
+        print("   Note: For standardized benchmarking, predefined splits are preferred")
+
+        # Create reproducible splits for consistency
+        X_train, X_temp, y_train, y_temp = train_test_split(
+            X_processed, y, test_size=0.3, random_state=42, stratify=y
+        )
+        X_val, X_test, y_val, y_test = train_test_split(
+            X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp
+        )
+
+    print(f"   📊 Final split sizes:")
+    print(f"   Train: {len(X_train)} samples")
+    print(f"   Validation: {len(X_val)} samples")
+    print(f"   Test: {len(X_test)} samples")
+    print(f"   ")
+    print(f"   🎯 Standardized splits enable fair comparison with other methods!")
     
     # 4. Create PyTorch datasets and dataloaders
     print("\n🔄 Creating PyTorch datasets...")

@@ -377,10 +377,12 @@ def preprocess_huggingface_data(X_raw, y, use_checkpoint=True):
         batch_size=batch_size
     )
 
-    print(f"   🎯 MAXIMUM PERFORMANCE SETTINGS:")
+    print(f"   🎯 MAXIMUM QUALITY SETTINGS (10 IMFs):")
     print(f"      🖥️  Total CPU cores: {available_cores}")
     print(f"      🔥 Using processes: {optimal_processes} ({optimal_processes/available_cores*100:.1f}% utilization)")
     print(f"      📦 Batch size: {batch_size}")
+    print(f"      🎯 IMFs per band: 10 (maximum quality)")
+    print(f"      📊 Features per sample: 46,080 (maximum information)")
     print(f"      ⚡ Expected speedup: ~{optimal_processes/8:.1f}x faster than 8 cores")
     print(f"      🚀 Estimated processing time: ~{52022/(optimal_processes*2.5)/60:.1f} minutes")
     print(f"      💪 CPU utilization: MAXIMUM BEAST MODE!")

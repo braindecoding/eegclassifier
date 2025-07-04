@@ -148,14 +148,45 @@ class OptimizedPreprocessor:
 
     def __init__(self, sampling_rate=128, n_processes=None, batch_size=32):
         self.sampling_rate = sampling_rate
-        self.n_processes = n_processes or min(cpu_count(), 8)  # Limit to 8 processes
-        self.batch_size = batch_size
 
-        print(f"🚀 OptimizedPreprocessor initialized:")
-        print(f"   CPU cores available: {cpu_count()}")
-        print(f"   Using processes: {self.n_processes}")
-        print(f"   Batch size: {self.batch_size}")
-        print(f"   GPU available: {GPU_AVAILABLE}")
+        # BEAST MODE optimization for 80-core Xeon systems!
+        total_cores = cpu_count()
+        if n_processes is None:
+            if total_cores >= 80:
+                # MAXIMUM BEAST MODE: Use 75% of cores (leave 25% for system)
+                self.n_processes = min(60, total_cores)
+                self.batch_size = 16  # Smaller batches for better parallelization
+                mode = "🔥 BEAST MODE"
+            elif total_cores >= 40:
+                # HIGH PERFORMANCE: Use 80% of cores
+                self.n_processes = min(32, total_cores)
+                self.batch_size = 24
+                mode = "🚀 HIGH-PERF"
+            elif total_cores >= 16:
+                # STANDARD: Use most cores
+                self.n_processes = min(12, total_cores)
+                self.batch_size = 32
+                mode = "⚡ STANDARD"
+            else:
+                # BASIC: Use available cores
+                self.n_processes = min(8, total_cores)
+                self.batch_size = batch_size
+                mode = "💻 BASIC"
+        else:
+            self.n_processes = min(n_processes, total_cores)
+            self.batch_size = batch_size
+            mode = "🔧 CUSTOM"
+
+        print(f"🚀 OptimizedPreprocessor initialized - {mode}:")
+        print(f"   🖥️  Total CPU cores: {total_cores}")
+        print(f"   🔥 Using processes: {self.n_processes} ({self.n_processes/total_cores*100:.1f}% utilization)")
+        print(f"   📦 Batch size: {self.batch_size}")
+        print(f"   💪 Expected speed: ~{self.n_processes*2.5:.1f} samples/second")
+        print(f"   🎯 GPU available: {GPU_AVAILABLE}")
+
+        if total_cores >= 80:
+            print(f"   🔥 BEAST MACHINE DETECTED! Preparing for MAXIMUM PERFORMANCE!")
+            print(f"   ⚡ Estimated 52K samples processing time: ~{52022/(self.n_processes*2.5)/60:.1f} minutes")
 
     def process_parallel_cpu(self, X_raw):
         """
@@ -172,17 +203,29 @@ class OptimizedPreprocessor:
         with Pool(processes=self.n_processes) as pool:
             results = []
 
-            # Process in chunks untuk progress tracking
-            chunk_size = max(1, len(args_list) // 20)  # 20 progress updates
+            # Enhanced progress tracking - more frequent updates
+            chunk_size = max(1, len(args_list) // 50)  # 50 progress updates (more frequent)
 
             for i in range(0, len(args_list), chunk_size):
                 chunk = args_list[i:i + chunk_size]
                 chunk_results = pool.map(self.process_single_sample_hht, chunk)
                 results.extend(chunk_results)
 
+                # Enhanced progress information
                 progress = min(100, (i + len(chunk)) * 100 // len(args_list))
                 elapsed = time.time() - start_time
-                print(f"   Progress: {progress}% ({i + len(chunk)}/{len(args_list)}) - {elapsed:.1f}s")
+                samples_processed = i + len(chunk)
+
+                if samples_processed > 0:
+                    speed = samples_processed / elapsed  # samples per second
+                    remaining_samples = len(args_list) - samples_processed
+                    eta_seconds = remaining_samples / speed if speed > 0 else 0
+                    eta_minutes = eta_seconds / 60
+
+                    print(f"   📊 Progress: {progress:3.1f}% ({samples_processed:,}/{len(args_list):,}) | "
+                          f"Speed: {speed:.1f} samples/s | "
+                          f"Elapsed: {elapsed/60:.1f}m | "
+                          f"ETA: {eta_minutes:.1f}m")
 
         # Sort results by sample index
         results.sort(key=lambda x: x[0])
@@ -342,17 +385,29 @@ class OptimizedPreprocessor:
         with Pool(processes=self.n_processes) as pool:
             results = []
 
-            # Process in chunks untuk progress tracking
-            chunk_size = max(1, len(args_list) // 20)  # 20 progress updates
+            # Enhanced progress tracking for hybrid processing
+            chunk_size = max(1, len(args_list) // 50)  # 50 progress updates
 
             for i in range(0, len(args_list), chunk_size):
                 chunk = args_list[i:i + chunk_size]
                 chunk_results = pool.map(self.process_single_sample_hht, chunk)
                 results.extend(chunk_results)
 
+                # Enhanced progress information for hybrid mode
                 progress = min(100, (i + len(chunk)) * 100 // len(args_list))
                 elapsed = time.time() - start_time
-                print(f"   Progress: {progress}% ({i + len(chunk)}/{len(args_list)}) - {elapsed:.1f}s")
+                samples_processed = i + len(chunk)
+
+                if samples_processed > 0:
+                    speed = samples_processed / elapsed
+                    remaining_samples = len(args_list) - samples_processed
+                    eta_seconds = remaining_samples / speed if speed > 0 else 0
+                    eta_minutes = eta_seconds / 60
+
+                    print(f"   🔥 Hybrid Progress: {progress:3.1f}% ({samples_processed:,}/{len(args_list):,}) | "
+                          f"Speed: {speed:.1f} samples/s | "
+                          f"Elapsed: {elapsed/60:.1f}m | "
+                          f"ETA: {eta_minutes:.1f}m")
 
         # Sort results by sample index
         results.sort(key=lambda x: x[0])

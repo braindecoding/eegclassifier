@@ -353,14 +353,37 @@ def preprocess_huggingface_data(X_raw, y, use_checkpoint=True):
     print("   🚀 Starting Band-wise EMD-HHT preprocessing...")
     print(f"   📊 Input data: {X_raw.shape}, Memory: {X_raw.nbytes / (1024**3):.1f} GB")
 
-    # Memory-optimized processor settings
+    # MAXIMUM PERFORMANCE settings for 80-core beast machine!
+    available_cores = os.cpu_count()
+
+    # Optimize for 80-core Xeon system
+    if available_cores >= 80:
+        # Use 60-70% of cores to leave room for system processes
+        optimal_processes = min(60, available_cores)  # 60 cores for maximum speed
+        batch_size = 16  # Smaller batches for better parallelization
+        print(f"   🔥 BEAST MODE: Detected {available_cores}-core Xeon system!")
+    elif available_cores >= 40:
+        optimal_processes = min(32, available_cores)  # Use 32 cores
+        batch_size = 24
+        print(f"   🚀 HIGH-PERFORMANCE: Detected {available_cores}-core system!")
+    else:
+        optimal_processes = min(8, available_cores)   # Fallback for smaller systems
+        batch_size = 32
+        print(f"   ⚡ STANDARD: Using {available_cores} cores")
+
     optimized_processor = OptimizedPreprocessor(
-        sampling_rate=128,  # Adjust based on actual sampling rate
-        n_processes=min(4, os.cpu_count()),  # Limit processes to reduce memory
-        batch_size=32  # Smaller batch size for large dataset
+        sampling_rate=128,
+        n_processes=optimal_processes,  # MAXIMUM CORES!
+        batch_size=batch_size
     )
 
-    print(f"   🔧 Memory-optimized settings: {optimized_processor.n_processes} processes, batch_size={optimized_processor.batch_size}")
+    print(f"   🎯 MAXIMUM PERFORMANCE SETTINGS:")
+    print(f"      🖥️  Total CPU cores: {available_cores}")
+    print(f"      🔥 Using processes: {optimal_processes} ({optimal_processes/available_cores*100:.1f}% utilization)")
+    print(f"      📦 Batch size: {batch_size}")
+    print(f"      ⚡ Expected speedup: ~{optimal_processes/8:.1f}x faster than 8 cores")
+    print(f"      🚀 Estimated processing time: ~{52022/(optimal_processes*2.5)/60:.1f} minutes")
+    print(f"      💪 CPU utilization: MAXIMUM BEAST MODE!")
 
     X_processed = optimized_processor.process_optimized(X_raw)
 
@@ -393,28 +416,42 @@ def preprocess_huggingface_data(X_raw, y, use_checkpoint=True):
     print(f"   ✅ Preprocessing completed")
     print(f"   Final shape: {X_processed.shape}")
     
-    # Save checkpoint with memory optimization
+    # Save checkpoint with chunked memory optimization
     if use_checkpoint:
         print(f"   💾 Saving large checkpoint ({X_processed.nbytes / (1024**3):.1f} GB)...")
-        print(f"   Using memory-efficient saving...")
+        print(f"   Using chunked memory-efficient saving...")
 
         try:
-            # Save in chunks to avoid memory issues
+            # Try standard checkpoint first
             checkpoint_manager.save_checkpoint('hf_normalized_data', X_processed)
-            print(f"   ✅ Checkpoint saved successfully")
+            print(f"   ✅ Standard checkpoint saved successfully")
         except Exception as e:
-            print(f"   ❌ Checkpoint save failed: {e}")
-            print(f"   🔄 Trying alternative save method...")
+            print(f"   ❌ Standard checkpoint save failed: {e}")
+            print(f"   🔄 Trying chunked save method...")
 
-            # Alternative: Save as compressed numpy
-            import numpy as np
-            checkpoint_file = os.path.join(checkpoint_manager.checkpoint_dir, 'hf_normalized_data.npz')
+            # Alternative: Chunked saving
             try:
-                np.savez_compressed(checkpoint_file, data=X_processed)
-                print(f"   ✅ Alternative checkpoint saved: {checkpoint_file}")
+                from chunked_checkpoint_saver import ChunkedCheckpointSaver
+                chunked_saver = ChunkedCheckpointSaver(checkpoint_manager.checkpoint_dir)
+                success = chunked_saver.save_chunked_data(X_processed, 'hf_normalized_data', chunk_size=5000)
+
+                if success:
+                    print(f"   ✅ Chunked checkpoint saved successfully")
+                else:
+                    print(f"   ❌ Chunked save failed")
+
             except Exception as e2:
-                print(f"   ❌ Alternative save also failed: {e2}")
-                print(f"   ⚠️  Continuing without checkpoint...")
+                print(f"   ❌ Chunked save also failed: {e2}")
+
+                # Last resort: Compressed numpy
+                try:
+                    import numpy as np
+                    checkpoint_file = os.path.join(checkpoint_manager.checkpoint_dir, 'hf_normalized_data.npz')
+                    np.savez_compressed(checkpoint_file, data=X_processed)
+                    print(f"   ✅ Compressed numpy checkpoint saved: {checkpoint_file}")
+                except Exception as e3:
+                    print(f"   ❌ All save methods failed: {e3}")
+                    print(f"   ⚠️  Continuing without checkpoint...")
     
     return X_processed
 

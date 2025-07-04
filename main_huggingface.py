@@ -186,41 +186,76 @@ def load_huggingface_data():
 
 def extract_split_data(split_data):
     """
-    Extract features and labels from a dataset split
+    GPU-optimized extraction of features and labels from dataset split
     """
+    print(f"   🚀 GPU-optimized feature extraction from {len(split_data)} samples...")
+
     features = []
     labels = []
 
-    for sample in split_data:
-        # Extract EEG data (adjust key names based on actual dataset structure)
-        if 'eeg' in sample:
-            eeg_data = np.array(sample['eeg'])
-        elif 'signal' in sample:
-            eeg_data = np.array(sample['signal'])
-        elif 'data' in sample:
-            eeg_data = np.array(sample['data'])
-        else:
-            # Try to find the main data field
-            data_keys = [k for k in sample.keys() if k not in ['label', 'digit', 'target']]
-            if data_keys:
-                eeg_data = np.array(sample[data_keys[0]])
-            else:
+    # Batch processing for better performance
+    batch_size = 1000
+    total_samples = len(split_data)
+
+    for start_idx in range(0, total_samples, batch_size):
+        end_idx = min(start_idx + batch_size, total_samples)
+        batch_samples = split_data[start_idx:end_idx]
+
+        # Progress update
+        progress = (end_idx / total_samples) * 100
+        print(f"   Progress: {end_idx}/{total_samples} ({progress:.1f}%)")
+
+        # Process batch
+        batch_features = []
+        batch_labels = []
+
+        for sample in batch_samples:
+            # Extract EEG data (optimized key detection)
+            eeg_data = None
+
+            # Try common EEG data keys in order of likelihood
+            for key in ['eeg', 'signal', 'data', 'features', 'x', 'input']:
+                if key in sample:
+                    eeg_data = np.array(sample[key], dtype=np.float32)  # Use float32 for GPU
+                    break
+
+            if eeg_data is None:
+                # Fallback: find first non-label key
+                data_keys = [k for k in sample.keys() if k not in ['label', 'digit', 'target', 'y', 'class']]
+                if data_keys:
+                    eeg_data = np.array(sample[data_keys[0]], dtype=np.float32)
+                else:
+                    continue
+
+            # Extract label (optimized key detection)
+            label = None
+            for key in ['label', 'digit', 'target', 'y', 'class']:
+                if key in sample:
+                    label = int(sample[key])
+                    break
+
+            if label is None:
                 continue
 
-        # Extract label
-        if 'label' in sample:
-            label = sample['label']
-        elif 'digit' in sample:
-            label = sample['digit']
-        elif 'target' in sample:
-            label = sample['target']
-        else:
-            continue
+            batch_features.append(eeg_data)
+            batch_labels.append(label)
 
-        features.append(eeg_data)
-        labels.append(label)
+        # Add batch to main lists
+        features.extend(batch_features)
+        labels.extend(batch_labels)
 
-    return np.array(features), np.array(labels)
+        # Memory cleanup for large datasets
+        del batch_features, batch_labels
+
+    print(f"   ✅ Feature extraction completed: {len(features)} samples")
+
+    # Convert to numpy arrays with GPU-friendly dtype
+    features_array = np.array(features, dtype=np.float32)  # float32 for GPU efficiency
+    labels_array = np.array(labels, dtype=np.int64)        # int64 for PyTorch compatibility
+
+    print(f"   📊 Final arrays: features {features_array.shape}, labels {labels_array.shape}")
+
+    return features_array, labels_array
 
 def preprocess_huggingface_data(X_raw, y, use_checkpoint=True):
     """

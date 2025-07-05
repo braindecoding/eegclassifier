@@ -14,6 +14,7 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 import time
 import os
 import sys
+import gc
 
 # Add parent directory to path to import from main.py
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -101,14 +102,16 @@ def create_data_loaders(X_processed, y, split_indices, batch_size=32):
     
     return train_loader, val_loader, test_loader
 
-def train_epoch(model, train_loader, criterion, optimizer, device):
+def train_epoch(model, train_loader, criterion, optimizer, device, accumulation_steps=8):
     """
-    Train model for one epoch
+    Train model for one epoch with gradient accumulation
     """
     model.train()
     total_loss = 0
     correct = 0
     total = 0
+
+    optimizer.zero_grad()  # Initialize gradients
 
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
@@ -116,19 +119,30 @@ def train_epoch(model, train_loader, criterion, optimizer, device):
         # Reshape for Conv1D: (batch, 1, features)
         data = data.unsqueeze(1)
 
-        optimizer.zero_grad()
         output = model(data)
         loss = criterion(output, target)
-        loss.backward()
-        optimizer.step()
 
-        total_loss += loss.item()
+        # Scale loss for gradient accumulation
+        loss = loss / accumulation_steps
+        loss.backward()
+
+        # Update weights every accumulation_steps
+        if (batch_idx + 1) % accumulation_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+
+        total_loss += loss.item() * accumulation_steps  # Unscale for logging
         pred = output.argmax(dim=1, keepdim=True)
         correct += pred.eq(target.view_as(pred)).sum().item()
         total += target.size(0)
 
-        if batch_idx % 100 == 0:
-            print(f'   Batch {batch_idx}/{len(train_loader)} | Loss: {loss.item():.6f} | Acc: {100.*correct/total:.2f}%')
+        if batch_idx % 200 == 0:  # Reduced frequency for smaller batches
+            print(f'   Batch {batch_idx}/{len(train_loader)} | Loss: {loss.item()*accumulation_steps:.6f} | Acc: {100.*correct/total:.2f}%')
+
+    # Final update if remaining gradients
+    if len(train_loader) % accumulation_steps != 0:
+        optimizer.step()
+        optimizer.zero_grad()
 
     avg_loss = total_loss / len(train_loader)
     accuracy = 100. * correct / total
@@ -173,8 +187,8 @@ def train_model():
     # Load data
     X_processed, y, split_indices = load_training_data()
 
-    # Paper specifications: batch_size=32
-    batch_size = 32
+    # Memory-efficient batch size for 516K features
+    batch_size = 4  # Reduced from 32 to fit in GPU memory
     train_loader, val_loader, test_loader = create_data_loaders(
         X_processed, y, split_indices, batch_size=batch_size
     )
@@ -201,14 +215,16 @@ def train_model():
     best_val_loss = float('inf')
     patience_counter = 0
 
-    print(f"\n🎯 Training Configuration (Paper Specifications):")
+    print(f"\n🎯 Training Configuration (Memory-Optimized):")
     print(f"   Architecture: 4×Conv1D(256→128→64→32) + 2×FC(128→64→10)")
     print(f"   Optimizer: Adam (lr=0.001)")
     print(f"   Loss: Categorical CrossEntropy")
-    print(f"   Batch size: {batch_size}")
+    print(f"   Batch size: {batch_size} (memory-optimized)")
+    print(f"   Gradient accumulation: 8 steps (effective batch_size=32)")
     print(f"   Epochs: {epochs}")
     print(f"   Early stopping: patience={patience}")
     print(f"   Target accuracy: 98.27% (paper benchmark)")
+    print(f"   Memory management: CUDA cache clearing enabled")
 
     print(f"\n📊 Dataset splits:")
     print(f"   Train: {len(split_indices['train_idx']):,} samples")
@@ -221,14 +237,18 @@ def train_model():
     for epoch in range(epochs):
         print(f"\n📈 Epoch {epoch+1}/{epochs}")
 
-        # Train
-        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
+        # Train with gradient accumulation (effective batch_size = 4×8 = 32)
+        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device, accumulation_steps=8)
 
         # Validate
         val_loss, val_acc = validate_epoch(model, val_loader, criterion, device)
 
         print(f"   Train Loss: {train_loss:.6f} | Train Acc: {train_acc:.2f}%")
         print(f"   Val Loss: {val_loss:.6f} | Val Acc: {val_acc:.2f}%")
+
+        # Memory cleanup
+        torch.cuda.empty_cache()
+        gc.collect()
 
         # Early stopping
         if val_loss < best_val_loss:

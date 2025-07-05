@@ -1,3 +1,7 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 class BrainDigiCNN(nn.Module):
     def __init__(self, input_size, num_classes=10):
         super(BrainDigiCNN, self).__init__()

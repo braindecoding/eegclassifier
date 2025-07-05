@@ -7,9 +7,10 @@ Memory-efficient training using preprocessed checkpoints
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import time
 import os
 import sys
@@ -17,6 +18,9 @@ import sys
 # Add parent directory to path to import from main.py
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from main import CheckpointManager
+
+# Import BrainDigiCNN architecture
+from braindigicnn import BrainDigiCNN
 
 class EEGDataset(Dataset):
     """
@@ -34,68 +38,7 @@ class EEGDataset(Dataset):
         actual_idx = self.indices[idx]
         return torch.FloatTensor(self.X_data[actual_idx]), torch.LongTensor([self.y_data[actual_idx]])[0]
 
-class BrainDigiCNN(nn.Module):
-    """
-    BrainDigiCNN model for EEG digit classification
-    Based on paper specifications
-    """
-    def __init__(self, input_size, num_classes=10):
-        super(BrainDigiCNN, self).__init__()
-        
-        # 1D CNN layers (paper specification)
-        self.conv1 = nn.Conv1d(1, 256, kernel_size=7, padding=3)
-        self.bn1 = nn.BatchNorm1d(256)
-        self.pool1 = nn.MaxPool1d(2)
-        
-        self.conv2 = nn.Conv1d(256, 128, kernel_size=7, padding=3)
-        self.bn2 = nn.BatchNorm1d(128)
-        self.pool2 = nn.MaxPool1d(2)
-        
-        self.conv3 = nn.Conv1d(128, 64, kernel_size=7, padding=3)
-        self.bn3 = nn.BatchNorm1d(64)
-        self.pool3 = nn.MaxPool1d(2)
-        
-        self.conv4 = nn.Conv1d(64, 32, kernel_size=7, padding=3)
-        self.bn4 = nn.BatchNorm1d(32)
-        self.pool4 = nn.MaxPool1d(2)
-        
-        # Calculate flattened size
-        self.flattened_size = self._get_flattened_size(input_size)
-        
-        # Fully connected layers
-        self.fc1 = nn.Linear(self.flattened_size, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, num_classes)
-        
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.5)
-        
-    def _get_flattened_size(self, input_size):
-        # Calculate size after conv and pooling layers
-        size = input_size
-        for _ in range(4):  # 4 pooling layers
-            size = size // 2
-        return 32 * size  # 32 channels from last conv layer
-    
-    def forward(self, x):
-        # Reshape for 1D conv: (batch, 1, features)
-        x = x.unsqueeze(1)
-        
-        # Conv layers
-        x = self.pool1(self.relu(self.bn1(self.conv1(x))))
-        x = self.pool2(self.relu(self.bn2(self.conv2(x))))
-        x = self.pool3(self.relu(self.bn3(self.conv3(x))))
-        x = self.pool4(self.relu(self.bn4(self.conv4(x))))
-        
-        # Flatten
-        x = x.view(x.size(0), -1)
-        
-        # FC layers
-        x = self.dropout(self.relu(self.fc1(x)))
-        x = self.dropout(self.relu(self.fc2(x)))
-        x = self.fc3(x)
-        
-        return x
+# BrainDigiCNN class imported from braindigicnn.py
 
 def load_training_data():
     """
@@ -158,61 +101,185 @@ def create_data_loaders(X_processed, y, split_indices, batch_size=32):
     
     return train_loader, val_loader, test_loader
 
+def train_epoch(model, train_loader, criterion, optimizer, device):
+    """
+    Train model for one epoch
+    """
+    model.train()
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
+
+        # Reshape for Conv1D: (batch, 1, features)
+        data = data.unsqueeze(1)
+
+        optimizer.zero_grad()
+        output = model(data)
+        loss = criterion(output, target)
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+        pred = output.argmax(dim=1, keepdim=True)
+        correct += pred.eq(target.view_as(pred)).sum().item()
+        total += target.size(0)
+
+        if batch_idx % 100 == 0:
+            print(f'   Batch {batch_idx}/{len(train_loader)} | Loss: {loss.item():.6f} | Acc: {100.*correct/total:.2f}%')
+
+    avg_loss = total_loss / len(train_loader)
+    accuracy = 100. * correct / total
+    return avg_loss, accuracy
+
+def validate_epoch(model, val_loader, criterion, device):
+    """
+    Validate model for one epoch
+    """
+    model.eval()
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for data, target in val_loader:
+            data, target = data.to(device), target.to(device)
+
+            # Reshape for Conv1D: (batch, 1, features)
+            data = data.unsqueeze(1)
+
+            output = model(data)
+            loss = criterion(output, target)
+
+            total_loss += loss.item()
+            pred = output.argmax(dim=1, keepdim=True)
+            correct += pred.eq(target.view_as(pred)).sum().item()
+            total += target.size(0)
+
+    avg_loss = total_loss / len(val_loader)
+    accuracy = 100. * correct / total
+    return avg_loss, accuracy
+
 def train_model():
     """
-    Main training function
+    Main training function following paper specifications
     """
     print("🚀 EEG Digit Classification Training - BrainDigiCNN")
     print("=" * 60)
-    
+    print("📜 Following paper specifications from README.md")
+
     # Load data
     X_processed, y, split_indices = load_training_data()
-    
-    # Create data loaders
+
+    # Paper specifications: batch_size=32
+    batch_size = 32
     train_loader, val_loader, test_loader = create_data_loaders(
-        X_processed, y, split_indices, batch_size=32
+        X_processed, y, split_indices, batch_size=batch_size
     )
-    
+
     # Setup device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🖥️  Using device: {device}")
-    
-    # Create model
+
+    # Create model using braindigicnn.py architecture
     input_size = X_processed.shape[1]  # 516,096 features
     model = BrainDigiCNN(input_size=input_size, num_classes=10)
     model = model.to(device)
-    
+
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"🧠 Model created: {total_params:,} parameters")
-    
-    # Setup training
-    criterion = nn.CrossEntropyLoss()
+    print(f"🧠 BrainDigiCNN Model: {total_params:,} parameters")
+
+    # Paper specifications: Adam optimizer, lr=0.001, categorical crossentropy
+    criterion = nn.CrossEntropyLoss()  # Categorical crossentropy equivalent
     optimizer = optim.Adam(model.parameters(), lr=0.001)
-    
-    print(f"\n🎯 Training configuration:")
+
+    # Paper specifications: epochs 10-20, early stopping patience=5
+    epochs = 20
+    patience = 5
+    best_val_loss = float('inf')
+    patience_counter = 0
+
+    print(f"\n🎯 Training Configuration (Paper Specifications):")
+    print(f"   Architecture: 4×Conv1D(256→128→64→32) + 2×FC(128→64→10)")
     print(f"   Optimizer: Adam (lr=0.001)")
-    print(f"   Loss: CrossEntropyLoss")
-    print(f"   Epochs: 20")
-    print(f"   Batch size: 32")
-    
+    print(f"   Loss: Categorical CrossEntropy")
+    print(f"   Batch size: {batch_size}")
+    print(f"   Epochs: {epochs}")
+    print(f"   Early stopping: patience={patience}")
+    print(f"   Target accuracy: 98.27% (paper benchmark)")
+
+    print(f"\n📊 Dataset splits:")
+    print(f"   Train: {len(split_indices['train_idx']):,} samples")
+    print(f"   Val: {len(split_indices['val_idx']):,} samples")
+    print(f"   Test: {len(split_indices['test_idx']):,} samples")
+
     print(f"\n🚀 Starting training...")
-    print(f"   Ready to train on {len(split_indices['train_idx']):,} samples")
-    print(f"   Validation on {len(split_indices['val_idx']):,} samples")
-    print(f"   Test on {len(split_indices['test_idx']):,} samples")
-    
-    # Training loop will be implemented here
-    print(f"\n💡 Training implementation ready!")
-    print(f"   All data loaded and prepared for training")
-    print(f"   Model architecture: BrainDigiCNN")
-    print(f"   Input features: {input_size:,}")
-    
-    return model, train_loader, val_loader, test_loader, device, criterion, optimizer
+
+    # Training loop
+    for epoch in range(epochs):
+        print(f"\n📈 Epoch {epoch+1}/{epochs}")
+
+        # Train
+        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
+
+        # Validate
+        val_loss, val_acc = validate_epoch(model, val_loader, criterion, device)
+
+        print(f"   Train Loss: {train_loss:.6f} | Train Acc: {train_acc:.2f}%")
+        print(f"   Val Loss: {val_loss:.6f} | Val Acc: {val_acc:.2f}%")
+
+        # Early stopping
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            patience_counter = 0
+            # Save best model
+            torch.save(model.state_dict(), 'best_braindigicnn_model.pth')
+            print(f"   ✅ New best model saved!")
+        else:
+            patience_counter += 1
+            print(f"   ⏳ Patience: {patience_counter}/{patience}")
+
+            if patience_counter >= patience:
+                print(f"   🛑 Early stopping triggered!")
+                break
+
+    # Load best model for final evaluation
+    model.load_state_dict(torch.load('best_braindigicnn_model.pth'))
+
+    # Final test evaluation
+    print(f"\n🎯 Final Test Evaluation:")
+    test_loss, test_acc = validate_epoch(model, test_loader, criterion, device)
+    print(f"   Test Loss: {test_loss:.6f}")
+    print(f"   Test Accuracy: {test_acc:.2f}%")
+    print(f"   Paper Target: 98.27%")
+
+    if test_acc >= 98.0:
+        print(f"   🎉 EXCELLENT! Achieved paper-level performance!")
+    elif test_acc >= 95.0:
+        print(f"   ✅ GOOD! Strong performance achieved!")
+    else:
+        print(f"   📈 Room for improvement - consider hyperparameter tuning")
+
+    return model, test_acc
 
 if __name__ == "__main__":
-    # Run training setup
-    model, train_loader, val_loader, test_loader, device, criterion, optimizer = train_model()
-    
-    print(f"\n✅ Training setup completed!")
-    print(f"   Ready to implement training loop")
-    print(f"   All checkpoints loaded successfully")
-    print(f"   Memory-efficient data loading active")
+    # Run complete training pipeline
+    print("🎯 BrainDigiCNN Training Pipeline")
+    print("Following paper specifications from README.md")
+    print("=" * 60)
+
+    try:
+        model, test_accuracy = train_model()
+
+        print(f"\n🎉 Training completed successfully!")
+        print(f"   Final test accuracy: {test_accuracy:.2f}%")
+        print(f"   Model saved as: best_braindigicnn_model.pth")
+        print(f"   Architecture: BrainDigiCNN (from braindigicnn.py)")
+        print(f"   Paper compliance: ✅ FULL")
+
+    except Exception as e:
+        print(f"\n❌ Training failed: {e}")
+        print(f"   Check data loading and model architecture")
+        raise

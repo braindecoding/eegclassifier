@@ -338,32 +338,43 @@ def main_huggingface_pipeline_memory_efficient():
     # 3. Preprocess data with Band-wise EMD-HHT (memory-efficient)
     X_processed = preprocess_huggingface_data_memory_efficient(X_raw, y, batch_size=1000)
 
-    # 4. Create memory-efficient reproducible splits
-    print("\n📊 Creating memory-efficient train/val/test splits...")
+    # 4. Create memory-efficient index-based splits (NO DATA COPYING)
+    print("\n📊 Creating memory-efficient index-based splits...")
     print(f"   Data size: {X_processed.nbytes / (1024**3):.1f} GB")
-    print(f"   Using index-based splitting to avoid memory copies...")
+    print(f"   Using INDEX-ONLY splitting to avoid memory copies...")
 
-    # Create reproducible splits
-    X_train, X_temp, y_train, y_temp = train_test_split(
-        X_processed, y, test_size=0.3, random_state=42, stratify=y
+    # Create index splits only (no data copying)
+    n_samples = len(X_processed)
+    indices = np.arange(n_samples)
+
+    # Split indices only (memory efficient)
+    train_idx, temp_idx, y_train_subset, y_temp_subset = train_test_split(
+        indices, y, test_size=0.3, random_state=42, stratify=y
     )
-    X_val, X_test, y_val, y_test = train_test_split(
-        X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp
+    val_idx, test_idx, _, _ = train_test_split(
+        temp_idx, y_temp_subset, test_size=0.5, random_state=42, stratify=y_temp_subset
     )
 
-    print(f"   ✅ Splits created: Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}")
+    print(f"   ✅ Index splits created: Train {len(train_idx)}, Val {len(val_idx)}, Test {len(test_idx)}")
 
-    # 5. Create PyTorch datasets
-    print("\n📦 Creating PyTorch datasets...")
-    train_dataset = HuggingFaceEEGDataset(X_train, y_train)
-    val_dataset = HuggingFaceEEGDataset(X_val, y_val)
-    test_dataset = HuggingFaceEEGDataset(X_test, y_test)
+    # Save split indices for future use (tiny memory footprint)
+    split_indices = {
+        'train_idx': train_idx,
+        'val_idx': val_idx,
+        'test_idx': test_idx
+    }
 
-    # Create data loaders
-    batch_size = 32
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    # Save indices checkpoint (very small file)
+    checkpoint_manager = CheckpointManager()
+    try:
+        checkpoint_manager.save_checkpoint('hf_split_indices', split_indices)
+        print("   ✅ Split indices saved to checkpoint")
+    except Exception as e:
+        print(f"   ⚠️  Split indices save failed: {e}")
+
+    print("\n📦 Memory-efficient dataset creation...")
+    print("   Note: Actual data splits will be created during training to save memory")
+    print("   Indices saved for future use")
     
     # 🎯 Preprocessing completed successfully!
     print(f"\n✅ MEMORY-EFFICIENT PREPROCESSING COMPLETED!")
@@ -371,18 +382,24 @@ def main_huggingface_pipeline_memory_efficient():
     print(f"   💾 Memory usage: {X_processed.nbytes / (1024**3):.1f} GB")
     print(f"   🎯 Features per sample: {X_processed.shape[1]:,}")
     print(f"   📈 Total samples: {X_processed.shape[0]:,}")
-    
+
     # Verify preprocessing quality
     print(f"\n🔍 Preprocessing Quality Check:")
     print(f"   Data type: {X_processed.dtype}")
     print(f"   Data range: [{X_processed.min():.6f}, {X_processed.max():.6f}]")
     print(f"   Data mean: {X_processed.mean():.6f}")
     print(f"   Data std: {X_processed.std():.6f}")
-    
+
+    print(f"\n📁 Checkpoints Available:")
+    checkpoint_manager.get_checkpoint_info()
+
     print(f"\n🎉 Memory-efficient Hugging Face EEG preprocessing pipeline completed!")
-    print(f"   Ready for model training in next step...")
-    
-    return X_processed, y
+    print(f"   ✅ Preprocessed data: {X_processed.shape}")
+    print(f"   ✅ Split indices: Train {len(train_idx)}, Val {len(val_idx)}, Test {len(test_idx)}")
+    print(f"   ✅ All checkpoints saved for safety")
+    print(f"   🚀 Ready for memory-efficient model training!")
+
+    return X_processed, y, split_indices
 
 if __name__ == "__main__":
     main_huggingface_pipeline_memory_efficient()

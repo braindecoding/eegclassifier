@@ -1,5 +1,5 @@
 # eegclassifier
-BrainDigiCNN based preprocessing
+BrainDigiCNN based preprocessing  
 BAND-Wise EMD Preprocessing
 
 

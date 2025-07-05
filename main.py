@@ -876,10 +876,10 @@ class EEGSignalProcessor:
         self.frequency_bands = {
             'delta': (0.5, 4),      # Delta (δ): 0.5–4 Hz
             'theta': (4, 8),        # Theta (θ): 4–8 Hz
-            'alpha': (8, 13),       # Alpha (α): 8–13 Hz
-            'beta_low': (13, 20),   # Beta Rendah (β₁): 13–20 Hz
-            'beta_high': (20, 30),  # Beta Tinggi (β₂): 20–30 Hz
-            'gamma': (30, 100)      # Gamma (γ): 30–100 Hz
+            'alpha': (8, 12),       # Alpha (α): 8–12 Hz (corrected)
+            'beta_low': (12, 16),   # Beta Low (β₁): 12–16 Hz (corrected)
+            'beta_high': (16, 24),  # Beta High (β₂): 16–24 Hz (corrected)
+            'gamma': (24, 40)       # Gamma (γ): 24–40 Hz (corrected)
         }
     
     def butterworth_filter(self, data, low_freq, high_freq, order=5):
@@ -904,10 +904,10 @@ class EEGSignalProcessor:
         except:
             return data
     
-    def lowpass_filter(self, data, cutoff_freq=100, order=5):
+    def lowpass_filter(self, data, cutoff_freq=45, order=5):
         """
         Lowpass filter untuk noise removal
-        Updated: cutoff frequency changed from 45Hz to 100Hz
+        Paper specification: cutoff frequency 45Hz, order 5, IIR type
         """
         if len(data) < 10:
             return data
@@ -982,17 +982,54 @@ class EEGSignalProcessor:
         if num_imf is None:
             num_imf = self._determine_adaptive_imf_count(data, min_imf, max_imf)
 
+        def _extend_boundary(self, extrema_idx, extrema_values, signal_length):
+            """
+            Extend boundaries untuk mengatasi end effects
+            Menggunakan mirror extension method
+            """
+            if len(extrema_idx) < 2:
+                return extrema_idx, extrema_values
+
+            extended_idx = list(extrema_idx)
+            extended_values = list(extrema_values)
+
+            # Left boundary extension
+            if extrema_idx[0] > 0:
+                # Mirror first two extrema
+                if len(extrema_idx) >= 2:
+                    mirror_idx = 2 * extrema_idx[0] - extrema_idx[1]
+                    if mirror_idx >= 0:
+                        extended_idx.insert(0, mirror_idx)
+                        extended_values.insert(0, extrema_values[0])
+
+            # Right boundary extension
+            if extrema_idx[-1] < signal_length - 1:
+                # Mirror last two extrema
+                if len(extrema_idx) >= 2:
+                    mirror_idx = 2 * extrema_idx[-1] - extrema_idx[-2]
+                    if mirror_idx < signal_length:
+                        extended_idx.append(mirror_idx)
+                        extended_values.append(extrema_values[-1])
+
+            return np.array(extended_idx), np.array(extended_values)
+
         def cubic_spline_envelope(signal_data, extrema_indices):
             """
-            Cubic spline interpolation untuk envelope sesuai paper
+            Proper cubic spline interpolation dengan boundary extension
             """
             if len(extrema_indices) < 2:
                 return np.zeros_like(signal_data)
 
             try:
                 from scipy.interpolate import CubicSpline
-                # Gunakan cubic spline interpolation
-                cs = CubicSpline(extrema_indices, signal_data[extrema_indices],
+
+                # Extend boundaries to handle end effects
+                extended_idx, extended_values = _extend_boundary(
+                    self, extrema_indices, signal_data[extrema_indices], len(signal_data)
+                )
+
+                # Gunakan cubic spline interpolation dengan extended boundaries
+                cs = CubicSpline(extended_idx, extended_values,
                                bc_type='natural', extrapolate=True)
                 return cs(range(len(signal_data)))
             except:
@@ -1069,17 +1106,28 @@ class EEGSignalProcessor:
                     # Step 4: Find difference q(t) = p(t) - m(t)
                     h_new = h - mean_env
 
-                    # Step 5: Check if h_new is an IMF
-                    if is_imf(h_new):
+                    # Step 5: Proper stopping criteria
+
+                    # Standard deviation test (Huang et al. 1998)
+                    if np.sum(h ** 2) > 0:
+                        sd = np.sum((h - h_new) ** 2) / np.sum(h ** 2)
+                        sd_threshold = 0.2  # Standard threshold
+                    else:
+                        sd = float('inf')
+
+                    # Cauchy convergence test (industry standard tolerance)
+                    cauchy_test = np.sum(np.abs(h_new - h)) < 1e-6
+
+                    # IMF condition check
+                    imf_condition = is_imf(h_new)
+
+                    # Combined stopping criteria
+                    if (sd < sd_threshold and imf_condition) or cauchy_test:
                         h = h_new
                         break
 
                     # Continue sifting
                     h = h_new
-
-                    # Convergence check
-                    if np.sum(np.abs(h_new - h)) < 1e-8:
-                        break
 
                 except Exception as e:
                     break
@@ -1283,15 +1331,15 @@ class EEGSignalProcessor:
         3. Band-wise EMD-HHT:
            - Delta (δ): 0.5–4 Hz → Bandpass → EMD → HHT
            - Theta (θ): 4–8 Hz → Bandpass → EMD → HHT
-           - Alpha (α): 8–13 Hz → Bandpass → EMD → HHT
-           - Beta Rendah (β₁): 13–20 Hz → Bandpass → EMD → HHT
-           - Beta Tinggi (β₂): 20–30 Hz → Bandpass → EMD → HHT
-           - Gamma (γ): 30–100 Hz → Bandpass → EMD → HHT
+           - Alpha (α): 8–12 Hz → Bandpass → EMD → HHT
+           - Beta Low (β₁): 12–16 Hz → Bandpass → EMD → HHT
+           - Beta High (β₂): 16–24 Hz → Bandpass → EMD → HHT
+           - Gamma (γ): 24–40 Hz → Bandpass → EMD → HHT
         4. Feature Concatenation - Gabungkan semua band features
 
         Output: Comprehensive feature vector dari semua frequency bands
         """
-        # 1. Lowpass filter untuk noise removal (100 Hz cutoff)
+        # 1. Lowpass filter untuk noise removal (45 Hz cutoff - paper specification)
         denoised = self.lowpass_filter(eeg_data)
         
         # 2. Notch filter untuk power line interference
@@ -1310,10 +1358,10 @@ class EEGSignalProcessor:
                 band_data = self.butterworth_filter(denoised, low_freq, high_freq)
                 print(f"          Bandpass filtering completed")
 
-                # Step 3b: EMD - Dekomposisi band menjadi IMFs
+                # Step 3b: EMD - Natural decomposition with max 10 IMFs (meaningful information)
                 print(f"          EMD decomposition...")
-                imfs = self.empirical_mode_decomposition(band_data)
-                print(f"          Generated {len(imfs)} IMFs for {band_name}")
+                imfs = self.empirical_mode_decomposition(band_data, max_imf=10)  # Natural decomposition, max 10 IMFs
+                print(f"          Generated {len(imfs)} meaningful IMFs for {band_name} (max 10, natural stop)")
 
                 # Step 3c: HHT - Feature extraction dari IMFs
                 print(f"          HHT feature extraction...")

@@ -45,3 +45,11 @@ Epochs: 10-20
 2. Train test val tanpa data leakage
 3. cross vall 5 cv
 4. random seed 42
+
+
+
+
+File	Size	Content	Usage
+hf_normalized_data.pkl	200GB	Preprocessed EEG features (52,022 × 516,096)	MAIN TRAINING DATA
+hf_split_indices.pkl	0.4MB	Train/val/test indices	DATA SPLITTING
+hf_raw_extracted.pkl	711MB	Labels (y) for training	LABELS

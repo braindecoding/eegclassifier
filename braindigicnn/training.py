@@ -37,7 +37,14 @@ class EEGDataset(Dataset):
     
     def __getitem__(self, idx):
         actual_idx = self.indices[idx]
-        return torch.FloatTensor(self.X_data[actual_idx]), torch.LongTensor([self.y_data[actual_idx]])[0]
+        label = self.y_data[actual_idx]
+
+        # Ensure label is in valid range [0, 9]
+        if label < 0 or label > 9:
+            print(f"⚠️  Invalid label {label} at index {actual_idx}, setting to 0")
+            label = 0
+
+        return torch.FloatTensor(self.X_data[actual_idx]), torch.LongTensor([label])[0]
 
 # BrainDigiCNN class imported from braindigicnn.py
 
@@ -69,14 +76,66 @@ def load_training_data():
         raise Exception("❌ Failed to load hf_raw_extracted.pkl")
     
     X_raw, y = raw_data
-    
+
+    # Debug label values
+    print(f"   🔍 Label debugging:")
+    print(f"      Label type: {type(y)}")
+    print(f"      Label dtype: {y.dtype if hasattr(y, 'dtype') else 'N/A'}")
+    print(f"      Label range: [{np.min(y)}, {np.max(y)}]")
+    print(f"      Unique labels: {np.unique(y)}")
+    print(f"      Label counts: {np.bincount(y) if np.min(y) >= 0 and np.max(y) < 20 else 'Invalid range'}")
+
+    # Clean labels - ensure they are in range [0, 9]
+    y = np.array(y, dtype=np.int64)
+
+    # Filter out invalid labels
+    valid_mask = (y >= 0) & (y <= 9)
+    invalid_count = np.sum(~valid_mask)
+
+    if invalid_count > 0:
+        print(f"   ⚠️  Found {invalid_count} invalid labels, filtering...")
+        print(f"      Invalid labels: {np.unique(y[~valid_mask])}")
+
+        # Filter data and indices
+        valid_indices = np.where(valid_mask)[0]
+        y = y[valid_mask]
+
+        # Update split indices to only include valid samples
+        train_idx_filtered = []
+        val_idx_filtered = []
+        test_idx_filtered = []
+
+        for idx in split_indices['train_idx']:
+            if idx in valid_indices:
+                train_idx_filtered.append(np.where(valid_indices == idx)[0][0])
+
+        for idx in split_indices['val_idx']:
+            if idx in valid_indices:
+                val_idx_filtered.append(np.where(valid_indices == idx)[0][0])
+
+        for idx in split_indices['test_idx']:
+            if idx in valid_indices:
+                test_idx_filtered.append(np.where(valid_indices == idx)[0][0])
+
+        split_indices['train_idx'] = np.array(train_idx_filtered)
+        split_indices['val_idx'] = np.array(val_idx_filtered)
+        split_indices['test_idx'] = np.array(test_idx_filtered)
+
+        # Filter X_processed
+        X_processed = X_processed[valid_indices]
+
+        print(f"   ✅ Filtered to valid samples:")
+        print(f"      Valid samples: {len(valid_indices)}")
+        print(f"      New label range: [{np.min(y)}, {np.max(y)}]")
+
     print(f"   ✅ Data loaded successfully:")
     print(f"      Features: {X_processed.shape}")
     print(f"      Labels: {len(y)}")
+    print(f"      Label range: [{np.min(y)}, {np.max(y)}]")
     print(f"      Train indices: {len(split_indices['train_idx'])}")
     print(f"      Val indices: {len(split_indices['val_idx'])}")
     print(f"      Test indices: {len(split_indices['test_idx'])}")
-    
+
     return X_processed, y, split_indices
 
 def create_data_loaders(X_processed, y, split_indices, batch_size=32):
@@ -285,10 +344,15 @@ def train_model():
     return model, test_acc
 
 if __name__ == "__main__":
+    # Enable CUDA debugging
+    import os
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
     # Run complete training pipeline
     print("🎯 BrainDigiCNN Training Pipeline")
     print("Following paper specifications from README.md")
     print("=" * 60)
+    print("🔍 CUDA debugging enabled for better error tracking")
 
     try:
         model, test_accuracy = train_model()
@@ -302,4 +366,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Training failed: {e}")
         print(f"   Check data loading and model architecture")
+        print(f"   Debug info: CUDA_LAUNCH_BLOCKING=1 enabled")
         raise

@@ -591,26 +591,24 @@ def main_huggingface_pipeline():
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
     
-    # 5. Create model
-    print("\n🧠 Creating BrainDigiCNN model...")
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"   Using device: {device}")
-    
-    model = BrainDigiCNN(input_size=X_processed.shape[1], num_classes=10)
-    model = model.to(device)
-    
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f"   Model parameters: {total_params:,}")
-    
-    # 6. Train model
-    print("\n🚀 Starting training...")
-    
-    # Training will be implemented similar to main_pytorch.py
-    # with memory-efficient gradient accumulation
-    
-    print("🎯 Hugging Face pipeline setup completed!")
-    print("   Ready for training with optimized dataset loading!")
+    # 🎯 Preprocessing completed successfully!
+    print(f"\n✅ PREPROCESSING COMPLETED!")
+    print(f"   📊 Final processed data shape: {X_processed.shape}")
+    print(f"   💾 Memory usage: {X_processed.nbytes / (1024**3):.1f} GB")
+    print(f"   🎯 Features per sample: {X_processed.shape[1]:,}")
+    print(f"   📈 Total samples: {X_processed.shape[0]:,}")
+
+    # Verify preprocessing quality
+    print(f"\n🔍 Preprocessing Quality Check:")
+    print(f"   Data type: {X_processed.dtype}")
+    print(f"   Data range: [{X_processed.min():.6f}, {X_processed.max():.6f}]")
+    print(f"   Data mean: {X_processed.mean():.6f}")
+    print(f"   Data std: {X_processed.std():.6f}")
+
+    print(f"\n� Hugging Face EEG preprocessing pipeline completed successfully!")
+    print(f"   Ready for model training in next step...")
+
+    return X_processed, y
 
 if __name__ == "__main__":
     main_huggingface_pipeline()

@@ -210,7 +210,7 @@ def preprocess_huggingface_data_memory_efficient(X_raw, y, use_checkpoint=True, 
             # Save final normalized checkpoint
             print("   💾 Saving final normalized checkpoint...")
             try:
-                checkpoint_manager.save_checkpoint(X_processed, 'hf_normalized_data')
+                checkpoint_manager.save_checkpoint('hf_normalized_data', X_processed)
                 print("   ✅ Final normalized checkpoint saved successfully")
             except Exception as e:
                 print(f"   ⚠️  Final normalized checkpoint save failed: {e}")
@@ -262,7 +262,7 @@ def preprocess_huggingface_data_memory_efficient(X_raw, y, use_checkpoint=True, 
     if use_checkpoint:
         print("   💾 Saving pre-normalization checkpoint...")
         try:
-            checkpoint_manager.save_checkpoint(X_processed, 'hf_preprocessed_raw')
+            checkpoint_manager.save_checkpoint('hf_preprocessed_raw', X_processed)
             print("   ✅ Pre-normalization checkpoint saved successfully")
         except Exception as e:
             print(f"   ⚠️  Pre-normalization checkpoint save failed: {e}")
@@ -281,7 +281,7 @@ def preprocess_huggingface_data_memory_efficient(X_raw, y, use_checkpoint=True, 
     if use_checkpoint:
         print("   💾 Saving checkpoint...")
         try:
-            checkpoint_manager.save_checkpoint(X_processed, 'hf_normalized_data')
+            checkpoint_manager.save_checkpoint('hf_normalized_data', X_processed)
             print("   ✅ Checkpoint saved successfully")
         except Exception as e:
             print(f"   ⚠️  Checkpoint save failed: {e}")
@@ -326,7 +326,7 @@ def main_huggingface_pipeline_memory_efficient():
         # Save extraction checkpoint
         print("   💾 Saving extraction checkpoint...")
         try:
-            checkpoint_manager.save_checkpoint((X_raw, y), 'hf_raw_extracted')
+            checkpoint_manager.save_checkpoint('hf_raw_extracted', (X_raw, y))
             print("   ✅ Extraction checkpoint saved successfully")
         except Exception as e:
             print(f"   ⚠️  Extraction checkpoint save failed: {e}")

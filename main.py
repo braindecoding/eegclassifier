@@ -413,37 +413,78 @@ class OptimizedPreprocessor:
         results.sort(key=lambda x: x[0])
         processed_data = [result[1] for result in results]
 
-        # Handle variable feature lengths (standardize to uniform length)
+        # Handle variable HHT time series shapes (standardize to uniform dimensions)
         if len(processed_data) > 0:
-            feature_lengths = [len(features) for features in processed_data]
-            max_length = max(feature_lengths)
-            min_length = min(feature_lengths)
+            # Check if we have time series format (2D) or flattened format (1D)
+            sample_shape = processed_data[0].shape
 
-            if max_length != min_length:
-                print(f"   📊 Standardizing feature lengths:")
-                print(f"      Min length: {min_length:,}")
-                print(f"      Max length: {max_length:,}")
+            if len(sample_shape) == 2:
+                # Time series format: (n_features, n_timepoints)
+                print(f"   📊 Standardizing HHT time series dimensions:")
 
-                # Standardize all features to max length
+                # Get dimensions across all samples
+                n_features_list = [features.shape[0] for features in processed_data]
+                n_timepoints_list = [features.shape[1] for features in processed_data]
+
+                max_features = max(n_features_list)
+                min_features = min(n_features_list)
+                max_timepoints = max(n_timepoints_list)
+                min_timepoints = min(n_timepoints_list)
+
+                print(f"      Features: {min_features} - {max_features}")
+                print(f"      Timepoints: {min_timepoints} - {max_timepoints}")
+
+                # Standardize to max dimensions
                 standardized_data = []
                 for i, features in enumerate(processed_data):
-                    if len(features) < max_length:
-                        # Pad with zeros
-                        padded = np.zeros(max_length)
-                        padded[:len(features)] = features
-                        standardized_data.append(padded)
-                    elif len(features) > max_length:
-                        # Truncate (shouldn't happen, but safety)
-                        standardized_data.append(features[:max_length])
-                    else:
-                        standardized_data.append(features)
+                    current_features, current_timepoints = features.shape
+
+                    # Create padded array
+                    padded = np.zeros((max_features, max_timepoints))
+
+                    # Copy existing data
+                    padded[:current_features, :current_timepoints] = features
+
+                    standardized_data.append(padded)
 
                     if i % 10000 == 0:
                         print(f"      Standardizing: {i:,}/{len(processed_data):,}")
 
                 processed_data = standardized_data
-                print(f"   ✅ Feature standardization completed")
-                print(f"   📊 Uniform length: {max_length:,} features per sample")
+                print(f"   ✅ HHT time series standardization completed")
+                print(f"   📊 Uniform shape: ({max_features}, {max_timepoints}) per sample")
+
+            else:
+                # Flattened format: (n_features,) - legacy handling
+                feature_lengths = [len(features) for features in processed_data]
+                max_length = max(feature_lengths)
+                min_length = min(feature_lengths)
+
+                if max_length != min_length:
+                    print(f"   📊 Standardizing flattened feature lengths:")
+                    print(f"      Min length: {min_length:,}")
+                    print(f"      Max length: {max_length:,}")
+
+                    # Standardize all features to max length
+                    standardized_data = []
+                    for i, features in enumerate(processed_data):
+                        if len(features) < max_length:
+                            # Pad with zeros
+                            padded = np.zeros(max_length)
+                            padded[:len(features)] = features
+                            standardized_data.append(padded)
+                        elif len(features) > max_length:
+                            # Truncate (shouldn't happen, but safety)
+                            standardized_data.append(features[:max_length])
+                        else:
+                            standardized_data.append(features)
+
+                        if i % 10000 == 0:
+                            print(f"      Standardizing: {i:,}/{len(processed_data):,}")
+
+                    processed_data = standardized_data
+                    print(f"   ✅ Feature standardization completed")
+                    print(f"   📊 Uniform length: {max_length:,} features per sample")
 
         return np.array(processed_data)
 

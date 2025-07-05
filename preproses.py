@@ -267,12 +267,68 @@ def preprocess_huggingface_data_memory_efficient(X_raw, y, use_checkpoint=True, 
         except Exception as e:
             print(f"   ⚠️  Pre-normalization checkpoint save failed: {e}")
 
-    # Apply robust normalization
-    print("   🔄 Applying robust normalization...")
-    scaler = StandardScaler()
-    X_processed = scaler.fit_transform(X_processed)
-    
-    print(f"   ✅ Normalization completed")
+    # Apply memory-efficient batch normalization for time series
+    print("   🔄 Applying memory-efficient batch normalization...")
+    print(f"   📊 Data shape: {X_processed.shape}")
+
+    # For time series data: (n_samples, n_features, n_timepoints)
+    # Normalize across samples for each (feature, timepoint) combination
+
+    if len(X_processed.shape) == 3:
+        # Time series format: (n_samples, n_features, n_timepoints)
+        n_samples, n_features, n_timepoints = X_processed.shape
+        print(f"   📊 Time series normalization: {n_samples} samples, {n_features} features, {n_timepoints} timepoints")
+
+        # Memory-efficient normalization: process in chunks
+        chunk_size = 1000  # Process 1000 samples at a time
+
+        # Calculate global statistics first (memory efficient)
+        print("   📊 Calculating global statistics...")
+        all_means = []
+        all_stds = []
+
+        for start_idx in range(0, n_samples, chunk_size):
+            end_idx = min(start_idx + chunk_size, n_samples)
+            chunk = X_processed[start_idx:end_idx]
+
+            # Calculate mean and std for this chunk
+            chunk_mean = np.mean(chunk, axis=0)  # Shape: (n_features, n_timepoints)
+            chunk_std = np.std(chunk, axis=0)    # Shape: (n_features, n_timepoints)
+
+            all_means.append(chunk_mean)
+            all_stds.append(chunk_std)
+
+            if start_idx % 10000 == 0:
+                print(f"      Statistics: {start_idx:,}/{n_samples:,}")
+
+        # Combine statistics
+        global_mean = np.mean(all_means, axis=0)
+        global_std = np.mean(all_stds, axis=0)
+
+        # Avoid division by zero
+        global_std = np.where(global_std == 0, 1.0, global_std)
+
+        print("   🔄 Applying normalization in batches...")
+
+        # Apply normalization in chunks
+        for start_idx in range(0, n_samples, chunk_size):
+            end_idx = min(start_idx + chunk_size, n_samples)
+
+            # Normalize chunk
+            X_processed[start_idx:end_idx] = (X_processed[start_idx:end_idx] - global_mean) / global_std
+
+            if start_idx % 10000 == 0:
+                print(f"      Normalizing: {start_idx:,}/{n_samples:,}")
+
+        print(f"   ✅ Time series normalization completed")
+
+    else:
+        # Flattened format: use standard normalization
+        print("   🔄 Standard normalization for flattened data...")
+        scaler = StandardScaler()
+        X_processed = scaler.fit_transform(X_processed)
+        print(f"   ✅ Standard normalization completed")
+
     print(f"   📊 Final shape: {X_processed.shape}")
     print(f"   📈 Data range: [{X_processed.min():.6f}, {X_processed.max():.6f}]")
     print(f"   📊 Data mean: {X_processed.mean():.6f}, std: {X_processed.std():.6f}")

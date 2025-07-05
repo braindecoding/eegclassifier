@@ -1,7 +1,7 @@
 # eegclassifier
 BrainDigiCNN based preprocessing  
-BAND-Wise EMD Preprocessing
-
+BAND-Wise EMD-HHT Preprocessing  
+Batch Based Processing
 
 ```sh
 Raw EEG Signal (256 timepoints, 14 channels)

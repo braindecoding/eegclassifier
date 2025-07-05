@@ -182,12 +182,40 @@ def preprocess_huggingface_data_memory_efficient(X_raw, y, use_checkpoint=True, 
     
     checkpoint_manager = CheckpointManager()
     
-    # Check for existing checkpoint
-    if use_checkpoint and checkpoint_manager.checkpoint_exists('hf_normalized_data'):
-        print("   📁 Loading preprocessed data from checkpoint...")
-        X_processed = checkpoint_manager.load_checkpoint('hf_normalized_data')
-        print(f"   ✅ Loaded preprocessed data: {X_processed.shape}")
-        return X_processed
+    # Check for existing checkpoints (multiple stages)
+    if use_checkpoint:
+        # Check for final normalized checkpoint first
+        if checkpoint_manager.checkpoint_exists('hf_normalized_data'):
+            print("   📁 Loading final normalized data from checkpoint...")
+            X_processed = checkpoint_manager.load_checkpoint('hf_normalized_data')
+            print(f"   ✅ Loaded final normalized data: {X_processed.shape}")
+            return X_processed
+
+        # Check for pre-normalization checkpoint
+        elif checkpoint_manager.checkpoint_exists('hf_preprocessed_raw'):
+            print("   📁 Loading pre-normalization data from checkpoint...")
+            X_processed = checkpoint_manager.load_checkpoint('hf_preprocessed_raw')
+            print(f"   ✅ Loaded pre-normalization data: {X_processed.shape}")
+
+            # Apply normalization to loaded data
+            print("   🔄 Applying robust normalization to loaded data...")
+            scaler = StandardScaler()
+            X_processed = scaler.fit_transform(X_processed)
+
+            print(f"   ✅ Normalization completed")
+            print(f"   📊 Final shape: {X_processed.shape}")
+            print(f"   📈 Data range: [{X_processed.min():.6f}, {X_processed.max():.6f}]")
+            print(f"   📊 Data mean: {X_processed.mean():.6f}, std: {X_processed.std():.6f}")
+
+            # Save final normalized checkpoint
+            print("   💾 Saving final normalized checkpoint...")
+            try:
+                checkpoint_manager.save_checkpoint(X_processed, 'hf_normalized_data')
+                print("   ✅ Final normalized checkpoint saved successfully")
+            except Exception as e:
+                print(f"   ⚠️  Final normalized checkpoint save failed: {e}")
+
+            return X_processed
     
     # Use OptimizedPreprocessor for Band-wise EMD-HHT with memory management
     print("   🚀 Starting Band-wise EMD-HHT preprocessing...")
@@ -229,7 +257,16 @@ def preprocess_huggingface_data_memory_efficient(X_raw, y, use_checkpoint=True, 
     X_processed = optimized_processor.process_optimized(X_raw)
 
     print(f"   📊 Processed data: {X_processed.shape}, Memory: {X_processed.nbytes / (1024**3):.1f} GB")
-    
+
+    # Save checkpoint BEFORE normalization (safety checkpoint)
+    if use_checkpoint:
+        print("   💾 Saving pre-normalization checkpoint...")
+        try:
+            checkpoint_manager.save_checkpoint(X_processed, 'hf_preprocessed_raw')
+            print("   ✅ Pre-normalization checkpoint saved successfully")
+        except Exception as e:
+            print(f"   ⚠️  Pre-normalization checkpoint save failed: {e}")
+
     # Apply robust normalization
     print("   🔄 Applying robust normalization...")
     scaler = StandardScaler()
@@ -271,7 +308,28 @@ def main_huggingface_pipeline_memory_efficient():
 
     # 2. Extract features and labels with memory efficiency
     print(f"\n🔄 Extracting features and labels with memory-efficient batch processing...")
-    X_raw, y = extract_split_data_memory_efficient(split_data, batch_size=2000)
+
+    # Check for extraction checkpoint first
+    checkpoint_manager = CheckpointManager()
+    if checkpoint_manager.checkpoint_exists('hf_raw_extracted'):
+        print("   📁 Loading extracted data from checkpoint...")
+        checkpoint_data = checkpoint_manager.load_checkpoint('hf_raw_extracted')
+        if checkpoint_data is not None:
+            X_raw, y = checkpoint_data
+            print(f"   ✅ Loaded extracted data: {X_raw.shape}")
+        else:
+            print("   ❌ Failed to load extraction checkpoint, extracting fresh...")
+            X_raw, y = extract_split_data_memory_efficient(split_data, batch_size=2000)
+    else:
+        X_raw, y = extract_split_data_memory_efficient(split_data, batch_size=2000)
+
+        # Save extraction checkpoint
+        print("   💾 Saving extraction checkpoint...")
+        try:
+            checkpoint_manager.save_checkpoint((X_raw, y), 'hf_raw_extracted')
+            print("   ✅ Extraction checkpoint saved successfully")
+        except Exception as e:
+            print(f"   ⚠️  Extraction checkpoint save failed: {e}")
 
     if len(X_raw) == 0:
         print("❌ No valid samples extracted")

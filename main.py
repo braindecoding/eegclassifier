@@ -1363,37 +1363,59 @@ class EEGSignalProcessor:
                 imfs = self.empirical_mode_decomposition(band_data, max_imf=10)  # Natural decomposition, max 10 IMFs
                 print(f"          Generated {len(imfs)} meaningful IMFs for {band_name} (max 10, natural stop)")
 
-                # Step 3c: HHT - Feature extraction dari IMFs
+                # Step 3c: HHT - Feature extraction dari IMFs (PRESERVE TIME SERIES)
                 print(f"          HHT feature extraction...")
                 if len(imfs) > 0:
                     hht_features = self.hilbert_huang_transform(imfs)
-                    band_feature_vector = hht_features.flatten()
-                    band_features.append(band_feature_vector)
-                    print(f"          Extracted {len(band_feature_vector)} features from {band_name}")
+                    # PRESERVE TIME SERIES: Shape (n_features, n_timepoints)
+                    # Each row: IA(t), IP(t), IF(t) for each IMF as time series
+                    band_features.append(hht_features)
+                    print(f"          Extracted {hht_features.shape} HHT time series from {band_name}")
+                    print(f"          Features: {len(imfs)} IMFs × 3 HHT features × {hht_features.shape[1]} timepoints")
                 else:
-                    # Fallback: gunakan band data langsung
-                    print(f"          No IMFs generated for {band_name}, using band data")
-                    band_features.append(band_data)
+                    # Fallback: gunakan band data langsung sebagai time series
+                    print(f"          No IMFs generated for {band_name}, using band data as time series")
+                    band_features.append(band_data.reshape(1, -1))  # Shape (1, n_timepoints)
 
             except Exception as e:
                 print(f"        Error in {band_name} band processing: {e}")
                 # Fallback: gunakan denoised signal
                 band_features.append(denoised[:len(denoised)//6])  # Approximate band size
 
-        # Step 4: Concatenate features dari semua frequency bands
+        # Step 4: Concatenate HHT time series from all frequency bands
         try:
-            print(f"        Concatenating features from all bands...")
-            # Ensure all band features have same length for concatenation
-            min_length = min(len(bf) for bf in band_features)
-            normalized_features = [bf[:min_length] for bf in band_features]
-            all_features = np.concatenate(normalized_features)
-            print(f"        Total features: {len(all_features)} from {len(band_features)} bands")
+            print(f"        Concatenating HHT time series from all bands...")
+
+            # Find common timepoint length across all bands
+            min_timepoints = min(bf.shape[1] for bf in band_features)
+            print(f"        Standardizing to {min_timepoints} timepoints")
+
+            # Standardize timepoint length and concatenate along feature axis
+            standardized_features = []
+            for i, bf in enumerate(band_features):
+                # Truncate or pad to min_timepoints
+                if bf.shape[1] > min_timepoints:
+                    bf_std = bf[:, :min_timepoints]  # Truncate
+                else:
+                    # Pad with zeros if needed
+                    pad_width = ((0, 0), (0, min_timepoints - bf.shape[1]))
+                    bf_std = np.pad(bf, pad_width, mode='constant', constant_values=0)
+
+                standardized_features.append(bf_std)
+                print(f"        Band {i}: {bf.shape} → {bf_std.shape}")
+
+            # Concatenate along feature axis (axis=0): (total_features, n_timepoints)
+            all_features = np.concatenate(standardized_features, axis=0)
+            print(f"        Final HHT time series: {all_features.shape}")
+            print(f"        Structure: {all_features.shape[0]} features × {all_features.shape[1]} timepoints")
+
         except Exception as e:
-            print(f"        Error in feature concatenation: {e}")
-            # Fallback
-            all_features = denoised
-        
-        # Return extracted features
+            print(f"        Error in HHT time series concatenation: {e}")
+            # Fallback: use denoised signal as time series
+            all_features = denoised.reshape(1, -1)  # Shape (1, n_timepoints)
+
+        # Return HHT time series features: Shape (n_features, n_timepoints)
+        # Ready for CNN to learn temporal evolution of HHT features
         return all_features
 
     def plot_imf_decomposition(self, eeg_data, digit_label, channel_idx=0, save_plot=True):

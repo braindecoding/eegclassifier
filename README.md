@@ -14,10 +14,18 @@ Raw EEG Signal (256 timepoints, 14 channels)
         ├── Beta Low (12-16 Hz)  → Butterworth Bandpass Order 5 → EMD (max 10) → HHT (IA,IP,IF)
         ├── Beta High (16-24 Hz) → Butterworth Bandpass Order 5 → EMD (max 10) → HHT (IA,IP,IF)
         └── Gamma (24-40 Hz)     → Butterworth Bandpass Order 5 → EMD (max 10) → HHT (IA,IP,IF)
-    ↓ Feature Concatenation
+    ↓ Feature Concatenation HHT dalam bentuk time series (bukan scalar). IA(t), IP(t), IF(t) sebagai fungsi waktu
     ↓ Normalization
 Final Feature Vector
 ```
+
+yang jadi input CNN adalah HHT features, TAPI:
+
+1. HHT dalam bentuk time series (bukan scalar)
+2. IA(t), IP(t), IF(t) sebagai fungsi waktu
+3. Dimensi ~300,000 features (bukan ~1,500)
+4. Concatenation semua HHT time series dari pipeline
+5. CNN belajar dari temporal evolution HHT features
 
 ## Proper EMD
 Standard practices untuk EMD details:

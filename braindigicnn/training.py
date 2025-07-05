@@ -175,8 +175,8 @@ def train_epoch(model, train_loader, criterion, optimizer, device, accumulation_
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
-        # Reshape for Conv1D: (batch, 1, features)
-        data = data.unsqueeze(1)
+        # Input shape: (batch, n_features, n_timepoints) - already correct for Conv1D
+        # No need to unsqueeze - data is already in correct format for temporal CNN
 
         output = model(data)
         loss = criterion(output, target)
@@ -220,8 +220,8 @@ def validate_epoch(model, val_loader, criterion, device):
         for data, target in val_loader:
             data, target = data.to(device), target.to(device)
 
-            # Reshape for Conv1D: (batch, 1, features)
-            data = data.unsqueeze(1)
+            # Input shape: (batch, n_features, n_timepoints) - already correct for Conv1D
+            # No need to unsqueeze - data is already in correct format for temporal CNN
 
             output = model(data)
             loss = criterion(output, target)

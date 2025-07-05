@@ -1,7 +1,9 @@
 # eegclassifier
 BrainDigiCNN based preprocessing
+BAND-Wise EMD Preprocessing
 
 
+```sh
 Raw EEG Signal (256 timepoints, 14 channels)
     ↓ Butterworth Lowpass (45Hz, Order 5, IIR)
     ↓ Notch Filter (50Hz, IIR)
@@ -15,6 +17,7 @@ Raw EEG Signal (256 timepoints, 14 channels)
     ↓ Feature Concatenation
     ↓ Normalization
 Final Feature Vector
+```
 
 ## Proper EMD
 Standard practices untuk EMD details:

@@ -22,11 +22,11 @@ Final Feature Vector
 ## Proper EMD
 Standard practices untuk EMD details:
 
-interpolation = "cubic_spline"  # Industry standard
-stopping_criteria = ["SD_test", "Cauchy_convergence"]
-boundary_method = "mirror_extension"
-max_iterations = 50
-tolerance = 1e-6
+* interpolation = "cubic_spline"  # Industry standard
+* stopping_criteria = ["SD_test", "Cauchy_convergence"]
+* boundary_method = "mirror_extension"
+* max_iterations = 50
+* tolerance = 1e-6
 
 
 

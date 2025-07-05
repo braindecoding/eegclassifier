@@ -43,7 +43,7 @@ def load_huggingface_dataset():
     
     try:
         # Load the dataset
-        ds = load_dataset("luisroque/mindbigdata2022_mnist_ep")
+        ds = load_dataset("DavidVivancos/MindBigData2022_MNIST_EP")
         print(f"   ✅ Dataset loaded successfully")
         
         # Check available splits
